@@ -1,0 +1,9 @@
+# 编译产物
+out/
+output/
+build/
+rockdev/
+# 工具链与预编译
+prebuilts/
+toolchain/
+tools/
