@@ -1,6 +1,7 @@
 #!/bin/bash
 
 if [ "$(cat /proc/device-tree/model)" == "Luckfox Pico Ultra W" ] ||
+	[ "$(cat /proc/device-tree/model)" == "Luckfox Pico Ultra W Custom" ] ||
 	[ "$(cat /proc/device-tree/model)" == "Luckfox Pico 86Panel W" ] ||
 	[ "$(cat /proc/device-tree/model)" == "Luckfox Pico Pi W" ]; then
 	systemctl stop wpa_supplicant

@@ -30,10 +30,13 @@
  */
 
 const int nx_txdesc_cnt[] = {
-	NX_TXDESC_CNT0, NX_TXDESC_CNT1, NX_TXDESC_CNT2, NX_TXDESC_CNT3,
-#if NX_TXQ_CNT == 5
+	NX_TXDESC_CNT0,
+	NX_TXDESC_CNT1,
+	NX_TXDESC_CNT2,
+	NX_TXDESC_CNT3,
+	#if NX_TXQ_CNT == 5
 	NX_TXDESC_CNT4,
-#endif
+	#endif
 };
 
 const int nx_txuser_cnt[] = {
@@ -41,7 +44,9 @@ const int nx_txuser_cnt[] = {
 	CONFIG_USER_MAX,
 	CONFIG_USER_MAX,
 	CONFIG_USER_MAX,
-#if NX_TXQ_CNT == 5
+	#if NX_TXQ_CNT == 5
 	1,
-#endif
+	#endif
 };
+
+

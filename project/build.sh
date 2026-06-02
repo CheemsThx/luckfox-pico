@@ -3,6 +3,21 @@ set -eE
 
 export LC_ALL=C
 export LD_LIBRARY_PATH=
+
+# Buildroot rejects PATH entries containing spaces/tabs/newlines.
+# WSL often inherits Windows PATH entries like "/mnt/c/Program Files/...".
+function sanitize_path_for_build() {
+	local clean="" entry
+	local IFS=':'
+	for entry in $PATH; do
+		case "$entry" in
+		*" "* | *$'\t'* | *$'\n'*) continue ;;
+		esac
+		clean+="${clean:+:}${entry}"
+	done
+	export PATH="$clean"
+}
+sanitize_path_for_build
 RECORD_IFS="$IFS"
 
 function unset_env_config_rk() {
@@ -283,8 +298,9 @@ function choose_target_board() {
 		MAX_BM_INDEX=1
 	elif __IS_IN_ARRAY "$HW_INDEX" "${range_emmc[@]}"; then
 		echo "${space8}${space8}[0] EMMC"
-		read -p "Which would you like? [0][default:0]: " BM_INDEX
-		MAX_BM_INDEX=0
+		echo "${space8}${space8}[1] SPI_NAND"
+		read -p "Which would you like? [0~1][default:0]: " BM_INDEX
+		MAX_BM_INDEX=1
 	else
 		echo "Invalid HW_INDEX: $HW_INDEX"
 		exit 1
@@ -334,9 +350,12 @@ function choose_target_board() {
 		fi
 	fi
 
-	# EMMC
+	# EMMC / SPI_NAND for Ultra/Pi/86Panel/Zero
 	if (("$HW_INDEX" >= range_emmc[0] && "$HW_INDEX" <= range_emmc[${#range_emmc[@]} - 1])); then
-		BM_INDEX=$BM_INDEX+2 #EMMC
+		if [ "$BM_INDEX" -eq 0 ]; then
+			BM_INDEX=2 # EMMC
+		fi
+		# BM_INDEX=1 keeps SPI_NAND
 	fi
 
 	RK_BUILD_TARGET_BOARD="BoardConfig_IPC/BoardConfig-${LF_BOOT_MEDIA[$BM_INDEX]}-${LF_SYSTEM[$SYS_INDEX]}-${LF_HARDWARE[$HW_INDEX]}-IPC.mk"
