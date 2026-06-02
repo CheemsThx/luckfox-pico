@@ -1,0 +1,86 @@
+#!/bin/sh
+# AIC8800DC: load WiFi/BT ko from /oem, bring up hci0 for BLE (gatttool/hcitool).
+
+WIFIBT_MODEL_MATCH='W'
+
+wait_oem_ko() {
+	i=0
+	while [ "$i" -lt 30 ]; do
+		[ -f /oem/usr/ko/insmod_wifi.sh ] && return 0
+		sleep 1
+		i=$((i + 1))
+	done
+	echo "wifibt: /oem/usr/ko not ready"
+	return 1
+}
+
+wifibt_model_match() {
+	model="$(cat /proc/device-tree/model 2>/dev/null)"
+	case "$model" in
+	*${WIFIBT_MODEL_MATCH}*) return 0 ;;
+	esac
+	return 1
+}
+
+load_aic8800_ko() {
+	if lsmod | grep -q '^aic8800_fdrv '; then
+		return 0
+	fi
+	if ! wait_oem_ko; then
+		return 1
+	fi
+	echo "wifibt: loading AIC8800 modules"
+	sh /oem/usr/ko/insmod_wifi.sh
+}
+
+setup_hci0() {
+	if ! command -v hciattach >/dev/null 2>&1; then
+		echo "wifibt: hciattach not found"
+		return 1
+	fi
+	if ! lsmod | grep -q '^aic8800_fdrv '; then
+		echo "wifibt: aic8800_fdrv not loaded, skip hci0"
+		return 1
+	fi
+
+	if command -v rfkill >/dev/null 2>&1; then
+		rfkill unblock bluetooth 2>/dev/null
+	fi
+
+	if ! hciconfig hci0 >/dev/null 2>&1; then
+		killall hciattach 2>/dev/null
+		hciattach -s 1500000 /dev/ttyS1 any 1500000 flow nosleep
+		sleep 2
+	fi
+
+	if hciconfig hci0 >/dev/null 2>&1; then
+		hciconfig hci0 up
+		echo "wifibt: hci0 ready"
+		return 0
+	fi
+
+	echo "wifibt: hci0 not found"
+	return 1
+}
+
+start() {
+	if ! wifibt_model_match; then
+		return 0
+	fi
+	load_aic8800_ko
+	setup_hci0
+}
+
+stop() {
+	killall hciattach 2>/dev/null
+	if hciconfig hci0 >/dev/null 2>&1; then
+		hciconfig hci0 down 2>/dev/null
+	fi
+}
+
+case "$1" in
+	start) start ;;
+	stop) stop ;;
+	restart) stop; sleep 1; start ;;
+	*) echo "Usage: $0 {start|stop|restart}"; exit 1 ;;
+esac
