@@ -115,9 +115,9 @@ if [ -n "$(cat /proc/device-tree/model | grep "W")" ] || \
 	insmod ccm.ko
 	insmod libaes.ko
 	insmod aes_generic.ko
-	insmod aic8800_bsp.ko
+	insmod aic8800_bsp.ko aicwf_dbg_level_bsp=3
 	sleep 0.2
-	insmod aic8800_fdrv.ko
+	insmod aic8800_fdrv.ko aicwf_dbg_level=3
 	sleep 2
 	insmod aic8800_btlpm.ko
 	sleep 0.1
