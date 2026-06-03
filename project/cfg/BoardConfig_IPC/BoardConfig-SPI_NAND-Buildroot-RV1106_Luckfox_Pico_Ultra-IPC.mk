@@ -71,4 +71,5 @@ export LF_WIFI_PSK="Your wifi password"
 
 export RK_PRE_BUILD_OEM_SCRIPT=luckfox-buildroot-oem-pre.sh
 export RK_PRE_BUILD_USERDATA_SCRIPT=luckfox-userdata-pre.sh
+export RK_POST_BUILD_SCRIPT=luckfox-buildroot-ble-fix-post.sh
 export RK_POST_OVERLAY="overlay-luckfox-config overlay-luckfox-buildroot-init overlay-luckfox-buildroot-shadow overlay-luckfox-buildroot-rgb overlay-luckfox-wifibt-firmware"

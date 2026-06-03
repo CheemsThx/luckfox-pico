@@ -1,0 +1,47 @@
+#!/bin/sh
+# D-Bus system bus (fixed for Luckfox IPC: stale pid + optional pulse policy).
+
+[ -d /run/dbus ] || mkdir -p /run/dbus
+[ -d /var/lock/subsys ] || mkdir -p /var/lock/subsys
+[ -d /tmp/dbus ] || mkdir -p /tmp/dbus
+
+dbus_start() {
+	if [ -f /run/messagebus.pid ]; then
+		pid="$(cat /run/messagebus.pid 2>/dev/null)"
+		if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+			return 0
+		fi
+		rm -f /run/messagebus.pid
+	fi
+
+	dbus-uuidgen --ensure
+	dbus-daemon --system
+}
+
+start() {
+	printf 'Starting system message bus: '
+	if dbus_start; then
+		echo "OK"
+		touch /var/lock/subsys/dbus-daemon
+	else
+		echo "FAIL"
+		return 1
+	fi
+}
+
+stop() {
+	printf 'Stopping system message bus: '
+	killall dbus-daemon 2>/dev/null
+	rm -f /var/lock/subsys/dbus-daemon /run/messagebus.pid
+	echo "done"
+}
+
+case "$1" in
+	start) start ;;
+	stop) stop ;;
+	restart) stop; start ;;
+	*)
+		echo "Usage: $0 {start|stop|restart}"
+		exit 1
+		;;
+esac
