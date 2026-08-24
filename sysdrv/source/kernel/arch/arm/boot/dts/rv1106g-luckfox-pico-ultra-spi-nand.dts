@@ -90,8 +90,21 @@
 	status = "okay";
 };
 
+/**********SD 卡 TF（GPIO2 sdmmc1m0 / &sdio，与原理图一致）**********
+ * D0-D3: GPIO2_A1/A0/A5/A4  CLK: GPIO2_A2  CMD: GPIO2_A3
+ */
 &sdio {
-	status = "disabled";
+	max-frequency = <50000000>;
+	no-sdio;
+	no-mmc;
+	supports-sd;
+	bus-width = <4>;
+	cap-mmc-highspeed;
+	cap-sd-highspeed;
+	disable-wp;
+	pinctrl-names = "default";
+	pinctrl-0 = <&sdmmc1m0_cmd &sdmmc1m0_clk &sdmmc1m0_bus4>;
+	status = "okay";
 };
 
 // 自研板: GPIO3_B0/B1 给 WiFi/BT 唤醒，禁用 MIPI 摄像头
@@ -116,6 +129,47 @@
 };
 
 &i2c4 {
+	status = "disabled";
+};
+
+/**********自研板无 LCD/触摸：释放 GPIO2 给 SD 卡 **********
+ * Ultra dtsi 的 RGB 使用 lcd_d8~d13 = GPIO2_A0~A5，与 sdmmc1m0 冲突
+ */
+/ {
+	panel: panel {
+		status = "disabled";
+	};
+
+	backlight: backlight {
+		status = "disabled";
+	};
+};
+
+&display_subsystem {
+	status = "disabled";
+};
+
+&rgb {
+	status = "disabled";
+};
+
+&rgb_in_vop {
+	status = "disabled";
+};
+
+&route_rgb {
+	status = "disabled";
+};
+
+&vop {
+	status = "disabled";
+};
+
+&pwm1 {
+	status = "disabled";
+};
+
+&i2c3 {
 	status = "disabled";
 };
 
