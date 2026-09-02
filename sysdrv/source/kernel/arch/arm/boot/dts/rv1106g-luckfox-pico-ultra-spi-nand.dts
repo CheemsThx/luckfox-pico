@@ -107,29 +107,35 @@
 	status = "okay";
 };
 
-// 自研板: GPIO3_B0/B1 给 WiFi/BT 唤醒，禁用 MIPI 摄像头
+/**********CSI 2-lane（GPIO3_B0/B1 留给 WiFi/BT 唤醒，不用 mipi_pins 的 d3）**********
+ * 官方 Ultra dtsi 默认 okay；此前为避让唤醒脚整段关掉。
+ * 传感器 data-lanes = <1 2>，只需 ck0+d0+d1。勿开 dphy1/mipi1/vir1，勿重开 LCD。
+ * i2c4 保持 dtsi 的 i2c4m2（GPIO3_PC7/PD0），勿改 m0（与 SD GPIO2 冲突）。
+ */
 &csi2_dphy0 {
-	status = "disabled";
+	status = "okay";
 };
 
 &mipi0_csi2 {
-	status = "disabled";
+	status = "okay";
 };
 
 &rkcif_mipi_lvds {
-	status = "disabled";
+	status = "okay";
+	pinctrl-names = "default";
+	pinctrl-0 = <&mipi_pins_2lane>;
 };
 
 &rkcif_mipi_lvds_sditf {
-	status = "disabled";
+	status = "okay";
 };
 
 &rkisp_vir0 {
-	status = "disabled";
+	status = "okay";
 };
 
 &i2c4 {
-	status = "disabled";
+	status = "okay";
 };
 
 /**********自研板无 LCD/触摸：释放 GPIO2 给 SD 卡 **********
@@ -206,6 +212,18 @@
 	wireless-bluetooth {
 		uart1_gpios: uart1-gpios {
 			rockchip,pins = <0 RK_PA5 RK_FUNC_GPIO &pcfg_pull_none>;
+		};
+	};
+
+	mipi {
+		mipi_pins_2lane: mipi-pins-2lane {
+			rockchip,pins =
+				<3 RK_PC0 2 &pcfg_pull_none>,
+				<3 RK_PC1 2 &pcfg_pull_none>,
+				<3 RK_PC2 2 &pcfg_pull_none>,
+				<3 RK_PC3 2 &pcfg_pull_none>,
+				<3 RK_PB6 2 &pcfg_pull_none>,
+				<3 RK_PB7 2 &pcfg_pull_none>;
 		};
 	};
 };
