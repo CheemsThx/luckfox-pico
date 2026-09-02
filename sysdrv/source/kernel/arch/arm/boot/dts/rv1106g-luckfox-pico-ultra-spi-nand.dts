@@ -228,6 +228,36 @@
 	};
 };
 
+/********** ram oops / pstore（DW-SDK-003）**********
+ * 本板 DRAM 256MB：物理 0x00000000–0x10000000（DTS 无 memory{}，由 U-Boot/ATAGS 传入）。
+ * 禁止复制 rv1106-thunder-boot.dtsi 的 ramoops@0x7c000 / 0x3000：那是 128MB thunder-boot
+ * 板上 MCU log（record/console 均为 0），不是内核 console，且 0x7c000 落在本板
+ * SPL BSS/栈 0x001fe000 与 U-Boot TEXT 0x00200000 之前，会被下次启动冲掉。
+ *
+ * U-Boot ENV_MEM_LAYOUT（rv1106_common.h，非 CONFIG_ENV_MEM_LAYOUT 时）：
+ *   Image   0–8MB     kernel_addr_r=0x00008000；内核 TEXT_OFFSET=0x00208000
+ *   zImage  8–12MB    kernel_addr_c=0x00808000
+ *   fdt    12–13MB    fdt_addr_r=0x00c00000（本板 dtb ≪ 1MB）
+ *   （空隙 13–14MB） ← ramoops 放这里
+ *   ramdisk 14MB+     ramdisk_addr_r=0x00e00000；CONFIG_SYS_LOAD_ADDR=0x00e00800
+ * SPL TEXT 0x0、BSS/栈 0x001fe000；U-Boot TEXT 0x00200000、INIT_SP 0x00400000。
+ * dtsi reserved-memory：mmc_ecsd@0x3f000 size 4K；drm-logo@0 size 0（占位）。
+ * CMA：bootargs rk_dma_heap_cma=66M，且 DT linux,cma 10M reusable+inactive，均无
+ * 固定基址，arm_memblock_init 里 dma_contiguous_reserve 与 rk_dma_heap_cma_setup
+ * 从 DRAM 高端切，远离 13MB。ramoops 256KB 不占 CMA。
+ * 不设 no-map：ramoops 需要内核映射。
+ */
+&reserved_memory {
+	ramoops@d00000 {
+		compatible = "ramoops";
+		reg = <0x00d00000 0x00040000>; /* 13MB，256KB */
+		record-size = <0x8000>;        /* 32KB × 约 4 条 oops/panic */
+		console-size = <0x20000>;      /* 128KB printk，watchdog 硬复位也能留尾 */
+		ftrace-size = <0x0>;
+		pmsg-size = <0x0>;
+	};
+};
+
 /**********SPI**********/
 &spi0 {
 	status = "disabled";
