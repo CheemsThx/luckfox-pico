@@ -1897,22 +1897,26 @@ case \$bootmedium in
 			if [ \$? -eq 0 ];then
 				echo "***********\$partname has been mounted***********"
 			else
+				if [ ! -e \$ubi_dev ];then
+					echo "***********\$ubi_dev not exist***********"
+					ubiattach /dev/ubi_ctrl -m \$part_no -d \$part_no
+					if [ \$? -ne 0 ];then
+						echo "ubiattach \$part_realdev error, try to format..."
+						ubiformat -y \$part_realdev
+						ubiattach /dev/ubi_ctrl -m \$part_no -d \$part_no
+					fi
+				fi
+				ubi_info_dir=/sys/class/ubi/ubi\${part_no}
+				avail_eraseblocks=\$(cat \$ubi_info_dir/avail_eraseblocks)
+				eraseblock_size=\$(cat \$ubi_info_dir/eraseblock_size)
 				if [ ! -e \$ubi_vol ];then
 					echo "***********\$ubi_vol not exist***********"
-					if [ ! -e \$ubi_dev ];then
-						echo "***********\$ubi_dev not exist***********"
-						ubiattach /dev/ubi_ctrl -m \$part_no -d \$part_no
-						if [ \$? -ne 0 ];then
-							echo "ubiattach \$part_realdev error, try to format..."
-							ubiformat -y \$part_realdev
-							ubiattach /dev/ubi_ctrl -m \$part_no -d \$part_no
-						fi
-					fi
-					ubi_info_dir=/sys/class/ubi/ubi\${part_no}
-					avail_eraseblocks=\$(cat \$ubi_info_dir/avail_eraseblocks)
-					eraseblock_size=\$(cat \$ubi_info_dir/eraseblock_size)
 					echo "try to make volume: \$ubi_vol ..."
 					ubimkvol \$ubi_dev -N \$partname -s \$((avail_eraseblocks*eraseblock_size))
+				elif [ "\$avail_eraseblocks" -gt 0 ];then
+					reserved_ebs=\$(cat \$ubi_info_dir/ubi\${part_no}_0/reserved_ebs)
+					echo "grow \$partname: leftover \$avail_eraseblocks LEBs"
+					ubirsvol \$ubi_dev -n 0 -s \$(( (reserved_ebs + avail_eraseblocks) * eraseblock_size ))
 				fi
 				mount -t \$part_fstype \$ubi_vol \$mountpt
 			fi

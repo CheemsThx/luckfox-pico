@@ -4,7 +4,7 @@
 仓库：`CheemsThx/luckfox-pico`，分支 `main_axiarz`  
 工作区：`/home/henry/rv1106/luckfox-pico`  
 板型：`BoardConfig-SPI_NAND-Buildroot-RV1106_Luckfox_Pico_Ultra-IPC.mk`  
-未烧写、未故意 panic、未 `./build.sh` 整包、未改应用仓库。
+已上板：0824 镜像上完成 SysRq panic → ramoops → SD 转存。未改应用仓库。
 
 应用仓库 bolt `aidlc-docs/bolts/DW-SDK-003-pstore-ramoops.md` 本机不存在，按工作项提示执行。
 
@@ -12,12 +12,13 @@
 
 | 项 | 值 |
 |---|---|
-| 是否已上板 | **否** |
+| 是否已上板 | **是**（0824 镜像，SysRq `echo c`） |
 | PSTORE 配置 | `CONFIG_PSTORE=y`、`CONFIG_PSTORE_CONSOLE=y`、`CONFIG_PSTORE_RAM=y`；显式关闭 `PSTORE_DEFLATE_COMPRESS`（避免拉 CRYPTO_DEFLATE） |
 | 配置文件 | `sysdrv/source/kernel/arch/arm/configs/luckfox_rv1106_linux_defconfig`（未写入 `rv1106-bt.config`） |
 | ramoops | `ramoops@d00000`，`reg = <0x00d00000 0x00040000>`（13MB 起，256KB） |
 | DTS | `sysdrv/source/kernel/arch/arm/boot/dts/rv1106g-luckfox-pico-ultra-spi-nand.dts` 的 `&reserved_memory` |
-| 转存 | 优先 `/mnt/sdcard/dw-pstore/<时间戳>/`，否则 `/userdata/dw-pstore/<时间戳>/`（userdata 约 2.2 MiB 有界） |
+| 转存 | 优先 `/mnt/sdcard/dw-pstore/<时间戳>/`，否则 `/userdata/dw-pstore/<时间戳>/`（无 SD 时 pstore 上限 8MB） |
+| 上板 | **已验证**：SysRq panic → ramoops → SD 转存 |
 | 启动顺序 | overlay `S20pstore`：在 `S20linkmount` 之后、`S21appinit`（RkLunch / dw-rec）之前 |
 
 ## 1. 内存图（为何不用 thunder-boot 地址）
@@ -61,8 +62,8 @@ CMA 在 `arm_memblock_init()` 里由 `dma_contiguous_reserve()` 然后 `rk_dma_h
 
 查找顺序：
 
-1. `/mnt/sdcard/dw-pstore/latest/`（符号链接，指向最近一次时间戳目录）
-2. 若无 SD，则 `/userdata/dw-pstore/latest/`
+1. `/mnt/sdcard/dw-pstore/` 下按目录名排序的最新时间戳（vfat **不能**建 `latest` 符号链接）
+2. 若无 SD，则 `/userdata/dw-pstore/` 同样按目录名排序
 
 每个时间戳目录内（有则读，没有则跳过）：
 
@@ -73,8 +74,23 @@ CMA 在 `arm_memblock_init()` 里由 `dma_contiguous_reserve()` 然后 `rk_dma_h
 
 userdata 路径总占用约 **2.2 MiB** 上限，超了删最旧时间戳目录。SD 不按此上限裁。
 
-## 3. 未做
+## 3. 上板验证（panic 闭环，2026-09-03）
 
-- 未烧写、未故意 panic，因此 **未在板上验证** `/sys/fs/pstore` 与转存目录
+镜像：`IPC_SPI_NAND_BUILDROOT_RV1106_LUCKFOX_PICO_ULTRA_20260903.0824_RELEASE_TEST`。  
+触发：`echo c > /proc/sysrq-trigger`。
+
+| 项 | 结果 |
+|---|---|
+| 故意 panic | **是**（SysRq `c`） |
+| 自动重启 | 打出 `Rebooting in 5 seconds..`；约 2 分钟后 ADB 回来，未拔电 |
+| 转存目录 | `/mnt/sdcard/dw-pstore/20260903-003422/` |
+| `dmesg-ramoops-0` | `sysrq: Trigger a crash` / `Kernel panic - not syncing: sysrq triggered crash` |
+| `console-ramoops-0` | 同上，结尾 `Rebooting in 5 seconds..` |
+| `/sys/fs/pstore` 拷完后 | 空（脚本已清记录，预期） |
+
+更早一次（USB 仍在 S50）同样有 dump：`/mnt/sdcard/dw-pstore/20260902-185106/dmesg-ramoops-0`。
+
+## 4. 未做
+
 - 未改 `dongwei-camera-rv1106`
 - 未做诊断 tar.gz、DW-SDK-001/002、未提交 `rockiva_video_det`

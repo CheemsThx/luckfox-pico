@@ -1,0 +1,54 @@
+#!/bin/sh
+# 本板全量 OTA：包必须在 SD。userdata 装不下 rootfs。
+# 用法：
+#   dw-ota                         # SD 上已有 /mnt/sdcard/update_ota.tar 则进 recovery
+#   dw-ota /path/to/update_ota.tar # 拷到 SD 再进 recovery
+# 改分区表（例如缩小 userdata）不能靠 OTA，只能电脑 wipe all。
+
+set -e
+
+SD_MNT=/mnt/sdcard
+SD_PKG=$SD_MNT/update_ota.tar
+MISC=$(realpath /dev/block/by-name/misc 2>/dev/null || echo /dev/block/by-name/misc)
+RECOVERY=/dev/block/by-name/recovery
+
+die() {
+	echo "dw-ota: $*" >&2
+	exit 1
+}
+
+write_bcb() {
+	# Rockchip FIT：BCB 在 misc 的 16KB。掉电后仍进 recovery。
+	# SPI NAND 是字符设备，nandwrite 走 /dev/mtdX。
+	bcb=/tmp/dw-ota-misc.img
+	dd if=/dev/zero of="$bcb" bs=1024 count=48 2>/dev/null
+	printf 'boot-recovery' | dd of="$bcb" bs=1 seek=16384 conv=notrunc 2>/dev/null
+	printf 'recovery\n--rk_fwupdate\n' | dd of="$bcb" bs=1 seek=16448 conv=notrunc 2>/dev/null
+	flash_eraseall "$MISC"
+	nandwrite -p "$MISC" "$bcb"
+	rm -f "$bcb"
+}
+
+if [ ! -e "$RECOVERY" ]; then
+	die "没有 recovery 分区，当前固件不支持 OTA（先 wipe all 烧带 recovery 的包）"
+fi
+
+src=$1
+if [ -n "$src" ]; then
+	[ -f "$src" ] || die "找不到包: $src"
+	mkdir -p "$SD_MNT"
+	mount | grep -q " $SD_MNT " || die "SD 未挂载 ($SD_MNT)"
+	if [ "$(realpath "$src")" != "$(realpath "$SD_PKG" 2>/dev/null || true)" ]; then
+		echo "dw-ota: 复制到 $SD_PKG"
+		cp -f "$src" "$SD_PKG"
+	fi
+fi
+
+[ -f "$SD_PKG" ] || die "把 update_ota.tar 放到 $SD_PKG 再运行"
+
+echo "dw-ota: 包 $SD_PKG ($(ls -lh "$SD_PKG" | awk '{print $5}'))"
+echo "dw-ota: 即将进 recovery 刷机，勿拔电"
+if [ -e "$MISC" ] && command -v nandwrite >/dev/null && command -v flash_eraseall >/dev/null; then
+	write_bcb || echo "dw-ota: BCB 写失败，仍 reboot recovery"
+fi
+reboot recovery

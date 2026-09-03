@@ -1,6 +1,6 @@
 #!/bin/sh
 
-SD_DEVICES="mmcblk1 mmcblk2"
+SD_DEVICES="mmcblk0 mmcblk1 mmcblk2"
 DEV_NAME=""
 MOUNT_PATH=""
 UPDATE_PACKAGE=""
@@ -11,6 +11,11 @@ input_path="$2"
 
 sleep 1
 echo "Ready to update."
+
+# 本板 userdata 装不下全量包；优先已挂载的 SD。
+if [ ! -f "$input_file" ] && [ -f /mnt/sdcard/update_ota.tar ]; then
+  input_file=/mnt/sdcard/update_ota.tar
+fi
 
 # Use the specified update package in preference.
 if [ -f "$input_file" ]; then

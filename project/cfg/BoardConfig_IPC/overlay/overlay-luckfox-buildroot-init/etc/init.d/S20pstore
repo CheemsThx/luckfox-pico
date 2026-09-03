@@ -6,7 +6,8 @@
 PSTORE_MNT=/sys/fs/pstore
 SD_BASE=/mnt/sdcard/dw-pstore
 UD_BASE=/userdata/dw-pstore
-UD_MAX_KB=2252
+# userdata 无 SD 时的 pstore 上限（KB），给应用配置留余量；有 SD 则不走这条路径
+UD_MAX_KB=8192
 
 is_mounted() {
 	mp="$1"
