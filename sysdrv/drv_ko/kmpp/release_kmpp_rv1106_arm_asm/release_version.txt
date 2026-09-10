@@ -1,3 +1,10 @@
+[local] mpp_vcodec: skip NULL combo chan in enc_chan_process_single_chan
+
+On SIGKILL during wrap encode, combo peer state != START so the
+lookup nulls the pointer then immediately loads offset 0x24 (Oops).
+
+---
+
 commit 424abb9bffcc6f077daa00572bca1301c757e079
 Author: Yandong Lin <yandong.lin@rock-chips.com>
 Date:   Thu Apr 25 11:21:07 2024 +0800

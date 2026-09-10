@@ -467,11 +467,13 @@ enc_chan_process_single_chan:
 .L33:
 	movs	r1, #1
 	bl	mpp_vcodec_get_chan_entry
-	ldr	r3, [r0, #28]
+	@ wrap combo peer may already be destroyed (SIGKILL); never deref NULL
 	mov	r5, r0
+	cmp	r5, #0
+	beq	.L138
+	ldr	r3, [r5, #28]
 	cmp	r3, #3
-	it	ne
-	movne	r5, #0
+	bne	.L138
 	ldr	r3, [r5, #36]
 	cmp	r3, #0
 	ble	.L36

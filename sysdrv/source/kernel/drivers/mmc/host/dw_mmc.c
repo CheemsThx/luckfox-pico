@@ -108,6 +108,7 @@ struct idmac_desc {
 
 #if IS_ENABLED(CONFIG_CPU_RV1106)
 static spinlock_t *g_sdmmc_ispvicap_lock;
+static struct dw_mci *g_rv1106_sdmmc_host;
 
 void rv1106_sdmmc_get_lock(void)
 {
@@ -122,6 +123,24 @@ void rv1106_sdmmc_put_lock(void)
 		spin_unlock(g_sdmmc_ispvicap_lock);
 }
 EXPORT_SYMBOL(rv1106_sdmmc_put_lock);
+
+/*
+ * RV1106: ISP/CIF IRCL/ICCL writes glitch ffaa0000 SDMMC.
+ * Call from process context before those resets so an in-flight
+ * SDIO/SD DMA is not killed (that path also stalls SFC/USB AXI).
+ */
+void rv1106_sdmmc_wait_idle(void)
+{
+	struct dw_mci *host = g_rv1106_sdmmc_host;
+	int i;
+
+	if (!host || in_interrupt() || irqs_disabled())
+		return;
+
+	for (i = 0; i < 250 && READ_ONCE(host->mrq); i++)
+		udelay(20);
+}
+EXPORT_SYMBOL(rv1106_sdmmc_wait_idle);
 #endif
 
 #define RV1106_RAMDON_DATA_SIZE 508
@@ -3549,6 +3568,7 @@ int dw_mci_probe(struct dw_mci *host)
 	if (host->is_rv1106_sd) {
 #if IS_ENABLED(CONFIG_CPU_RV1106)
 		g_sdmmc_ispvicap_lock = &host->lock;
+		g_rv1106_sdmmc_host = host;
 #endif
 		/* Select IDMAC interface */
 		fifo_size = mci_readl(host, CTRL);

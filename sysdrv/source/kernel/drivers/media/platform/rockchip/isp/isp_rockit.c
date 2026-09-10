@@ -348,6 +348,9 @@ int rkisp_rockit_pause_stream(struct rockit_cfg *input_rockit_cfg)
 	}
 
 	rockit_isp_ops.rkisp_stream_stop(stream);
+	if (stream->ispdev->cap_dev.wrap_line &&
+	    stream->id == RKISP_STREAM_MP)
+		rkisp_dvbm_deinit();
 
 	return 0;
 }

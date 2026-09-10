@@ -504,6 +504,7 @@
  * 17.add ioctl to get bay3d buf
  * 18.fix isp32 lite frame buffer data read
  * 19.support 8k for isp32 lite
+ * 20.SIGKILL: skip 3A wait, force MI/DVBM off before ISP reset
  */
 
 #define RKISP_DRIVER_VERSION RKISP_API_VERSION

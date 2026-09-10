@@ -34,7 +34,9 @@
 
 #include <linux/clk.h>
 #include <linux/compat.h>
+#include <linux/delay.h>
 #include <linux/iopoll.h>
+#include <linux/sched.h>
 #include <linux/pm_runtime.h>
 #include <linux/regmap.h>
 #include <linux/rk-camera-module.h>
@@ -1986,6 +1988,17 @@ static void rkisp_start_3a_run(struct rkisp_device *dev)
 			 "Waiting for 3A on use %d ms\n", 1000 - jiffies_to_msecs(ret));
 }
 
+static void rkisp_force_params_streamoff(struct rkisp_device *dev)
+{
+	struct rkisp_isp_params_vdev *params_vdev = &dev->params_vdev;
+	unsigned long flags;
+
+	spin_lock_irqsave(&params_vdev->config_lock, flags);
+	params_vdev->streamon = false;
+	spin_unlock_irqrestore(&params_vdev->config_lock, flags);
+	wake_up(&dev->sync_onoff);
+}
+
 static void rkisp_stop_3a_run(struct rkisp_device *dev)
 {
 	struct rkisp_isp_params_vdev *params_vdev = &dev->params_vdev;
@@ -1993,21 +2006,31 @@ static void rkisp_stop_3a_run(struct rkisp_device *dev)
 	struct v4l2_event ev = {
 		.type = CIFISP_V4L2_EVENT_STREAM_STOP,
 	};
-	int ret = 1000;
+	int wait_ms = 1000;
+	int ret;
 
 	if (!rkisp_is_need_3a(dev) || dev->isp_ver == ISP_V20 ||
 	    !params_vdev->is_subs_evt || dev->hw_dev->is_shutdown)
 		return;
 
+	/*
+	 * SIGKILL / do_exit never runs AIQ STREAMOFF. Waiting a full second
+	 * leaves wrap/DVBM DMA running after VENC is already gone.
+	 */
+	if (current->flags & PF_EXITING)
+		wait_ms = 50;
+
 	v4l2_event_queue(vdev, &ev);
 	ret = wait_event_timeout(dev->sync_onoff, !params_vdev->streamon,
-				 msecs_to_jiffies(ret));
-	if (!ret)
+				 msecs_to_jiffies(wait_ms));
+	if (!ret) {
 		v4l2_warn(&dev->v4l2_dev,
 			  "waiting on params stream off event timeout\n");
-	else
+		rkisp_force_params_streamoff(dev);
+	} else
 		v4l2_dbg(1, rkisp_debug, &dev->v4l2_dev,
-			 "Waiting for 3A off use %d ms\n", 1000 - jiffies_to_msecs(ret));
+			 "Waiting for 3A off use %d ms\n",
+			 wait_ms - jiffies_to_msecs(ret));
 }
 
 /* Mess register operations to stop isp */
@@ -2024,6 +2047,8 @@ static int rkisp_isp_stop(struct rkisp_device *dev)
 		 atomic_read(&hw->refcnt));
 
 	if (atomic_read(&hw->refcnt) > 1)
+		goto end;
+	if (!hw->is_runing && (dev->isp_state & ISP_STOP))
 		goto end;
 	/*
 	 * ISP(mi) stop in mi frame end -> Stop ISP(mipi) ->
@@ -2082,8 +2107,30 @@ static int rkisp_isp_stop(struct rkisp_device *dev)
 	rkisp_unite_write(dev, CIF_ISP_CTRL, val, true);
 	rkisp_clear_reg_cache_bits(dev, CIF_ISP_CTRL, CIF_ISP_CTRL_ISP_CFG_UPD);
 
-	readx_poll_timeout_atomic(readl, base + CIF_ISP_RIS,
-				  val, val & CIF_ISP_OFF, 20, 100);
+	if (in_interrupt()) {
+		readx_poll_timeout_atomic(readl, base + CIF_ISP_RIS,
+					  val, val & CIF_ISP_OFF, 20, 100);
+	} else {
+		/* 100us is shorter than a wrap burst; resetting mid-frame
+		 * deadlocks AXI (SFC / dwmmc / USB) on RV1106.
+		 */
+		readx_poll_timeout(readl, base + CIF_ISP_RIS,
+				   val, val & CIF_ISP_OFF, 200, 50000);
+	}
+	if (!(val & CIF_ISP_OFF) && !in_interrupt()) {
+		int si;
+
+		v4l2_warn(&dev->v4l2_dev,
+			  "ISP_OFF poll timeout, force disable MI\n");
+		for (si = 0; si < RKISP_MAX_STREAM; si++) {
+			struct rkisp_stream *st = &dev->cap_dev.stream[si];
+
+			if (st->ops && st->ops->disable_mi)
+				st->ops->disable_mi(st);
+		}
+		rkisp_dvbm_deinit();
+		udelay(50);
+	}
 	v4l2_dbg(1, rkisp_debug, &dev->v4l2_dev,
 		 "MI_CTRL:%x, ISP_CTRL:%x\n",
 		 readl(base + CIF_MI_CTRL), readl(base + CIF_ISP_CTRL));
@@ -2915,13 +2962,17 @@ static int rkisp_isp_sd_s_stream(struct v4l2_subdev *sd, int on)
 					wake_up(&s->done);
 			}
 		}
-		ret = wait_event_timeout(isp_dev->sync_onoff,
-					 isp_dev->isp_state & ISP_STOP ||
-					 !IS_HDR_RDBK(isp_dev->rd_mode),
-					 msecs_to_jiffies(500));
-		if (!ret)
-			v4l2_warn(&isp_dev->v4l2_dev, "%s wait timeout, mode:%d state:0x%x\n",
-				  __func__, isp_dev->rd_mode, isp_dev->isp_state);
+		if (!(current->flags & PF_EXITING)) {
+			ret = wait_event_timeout(isp_dev->sync_onoff,
+						 isp_dev->isp_state & ISP_STOP ||
+						 !IS_HDR_RDBK(isp_dev->rd_mode),
+						 msecs_to_jiffies(500));
+			if (!ret)
+				v4l2_warn(&isp_dev->v4l2_dev,
+					  "%s wait timeout, mode:%d state:0x%x\n",
+					  __func__, isp_dev->rd_mode,
+					  isp_dev->isp_state);
+		}
 		rkisp_isp_stop(isp_dev);
 		atomic_dec(&hw_dev->refcnt);
 		rkisp_params_stream_stop(&isp_dev->params_vdev);

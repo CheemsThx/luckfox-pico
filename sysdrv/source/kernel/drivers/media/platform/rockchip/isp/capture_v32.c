@@ -3,6 +3,7 @@
 
 #include <linux/delay.h>
 #include <linux/pm_runtime.h>
+#include <linux/sched.h>
 #include <media/v4l2-common.h>
 #include <media/v4l2-event.h>
 #include <media/v4l2-fh.h>
@@ -1568,12 +1569,17 @@ static void rkisp_stream_stop(struct rkisp_stream *stream)
 	struct v4l2_device *v4l2_dev = &dev->v4l2_dev;
 	unsigned long lock_flags = 0;
 	int ret = 0;
+	int wait_ms = 500;
 	bool is_wait = dev->hw_dev->is_shutdown ? false : true;
 
 	stream->stopping = true;
 	stream->is_pause = false;
 	if (stream->ops->disable_mi && dev->hw_dev->is_single)
 		stream->ops->disable_mi(stream);
+	if (stream->id == RKISP_STREAM_MP && dev->cap_dev.wrap_line)
+		rkisp_dvbm_deinit();
+	if (current->flags & PF_EXITING)
+		wait_ms = 100;
 	if (IS_HDR_RDBK(dev->rd_mode)) {
 		spin_lock_irqsave(&dev->hw_dev->rdbk_lock, lock_flags);
 		if (dev->hw_dev->cur_dev_id != dev->dev_id || dev->hw_dev->is_idle) {
@@ -1591,7 +1597,7 @@ static void rkisp_stream_stop(struct rkisp_stream *stream)
 	if (is_wait && !stream->ops->is_stream_stopped(stream)) {
 		ret = wait_event_timeout(stream->done,
 					 !stream->streaming,
-					 msecs_to_jiffies(500));
+					 msecs_to_jiffies(wait_ms));
 		if (!ret)
 			v4l2_warn(v4l2_dev, "%s id:%d timeout\n",
 				  __func__, stream->id);

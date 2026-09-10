@@ -897,6 +897,7 @@ void rkisp_soft_reset(struct rkisp_hw_dev *dev, bool is_secure)
 	val = 0xffff;
 	if (dev->isp_ver == ISP_V32) {
 		val = 0x3fffffff;
+		rv1106_sdmmc_wait_idle();
 		rv1106_sdmmc_get_lock();
 	}
 	writel(val, base + CIF_IRCL);
@@ -949,8 +950,11 @@ static void isp_config_clk(struct rkisp_hw_dev *dev, int on)
 		val |= ICCL_MPFBC_CLK;
 	if (dev->isp_ver >= ISP_V32) {
 		val |= ISP32_BRSZ_CLK_ENABLE | BIT(0) | BIT(16);
-		if (dev->isp_ver == ISP_V32)
+		if (dev->isp_ver == ISP_V32) {
+			if (!on)
+				rv1106_sdmmc_wait_idle();
 			rv1106_sdmmc_get_lock();
+		}
 	}
 	writel(val, dev->base_addr + CIF_ICCL);
 	if (dev->isp_ver == ISP_V32)
