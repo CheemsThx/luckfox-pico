@@ -67,6 +67,7 @@ export RK_BUILD_APP_TO_OEM_PARTITION=y
 export RK_ENABLE_ROCKCHIP_TEST=y
 
 export RK_ENABLE_WIFI=y
+# AIC8800DC 是 SDIO 驱动包名；运行时按 SDIO ID 兼容 DC 与 D80/D80L，两套固件一起打包
 export RK_ENABLE_WIFI_CHIP=AIC8800DC
 
 export LF_WIFI_SSID="dongxiTech"

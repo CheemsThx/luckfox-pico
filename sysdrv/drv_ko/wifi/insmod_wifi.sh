@@ -106,9 +106,10 @@ if [ $? -eq 0 ]; then
 	insmod atbm603x_.ko
 fi
 
-#aic8800
-if [ -n "$(cat /proc/device-tree/model | grep "W")" ] || \
-[ -n "$(cat /sys/bus/sdio/devices/*/uevent | grep "C8A1\:C18D")" ]; then
+# AIC8800 SDIO：DC=C8A1:C08D，D80/D80L=C8A1:0082，D80LN=C8A1:9082
+# 同一套 bsp/fdrv；固件文件名不同，都放在 aic8800dc_fw，驱动按 did 选。
+if [ -n "$(cat /proc/device-tree/model 2>/dev/null | grep "W")" ] || \
+[ -n "$(cat /sys/bus/sdio/devices/*/uevent 2>/dev/null | grep -i "C8A1")" ]; then
 	insmod cfg80211.ko
 	insmod libarc4.ko
 	insmod ctr.ko

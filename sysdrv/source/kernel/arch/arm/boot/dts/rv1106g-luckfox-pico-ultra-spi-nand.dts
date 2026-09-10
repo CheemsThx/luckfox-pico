@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 /*
  * Luckfox Pico Ultra W 自研板 — SPI NAND + AIC8800
+ * WiFi/BT 模组兼容 AIC8800DC 与 AIC8800D80/D80L（同一 SDIO + UART1 脚位）
  * WiFi SDIO: GPIO3 sdmmc0 / &sdmmc（与官方 Ultra 相同）
  * GPIO2 sdmmc1m0 / &sdio 为 SD 卡，勿用于 WiFi
  */
@@ -200,6 +201,17 @@
 	status = "okay";
 	pinctrl-names = "default";
 	pinctrl-0 = <&uart1m0_xfer &uart1m0_ctsn>;
+};
+
+/**********ESP32-C3（U5）UART3 M0：GPIO1_A0 TX / GPIO1_A1 RX**********
+ * 覆盖 ipc dtsi 的 <&uart3m0_xfer &uart3m1_xfer>。uart3m1 是 GPIO1_D0/D1，本板不用。
+ * U5 ESP_RX/ESP_TX 只接调试座，不是和 1106 通讯的那对。
+ * 别名 serial3（rv1106.dtsi）→ /dev/ttyS3。勿改 &uart1（AIC HCI / ttyS1）。
+ */
+&uart3 {
+	status = "okay";
+	pinctrl-names = "default";
+	pinctrl-0 = <&uart3m0_xfer>;
 };
 
 &pinctrl {

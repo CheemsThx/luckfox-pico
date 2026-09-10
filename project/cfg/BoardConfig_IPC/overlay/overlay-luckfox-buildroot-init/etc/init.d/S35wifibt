@@ -1,5 +1,5 @@
 #!/bin/sh
-# AIC8800DC: load WiFi/BT ko from /oem, bring up hci0 for BLE (gatttool/hcitool).
+# AIC8800 DC / D80 / D80L：同一套 ko + ttyS1 HCI。固件由驱动按 SDIO chipid 选择。
 
 WIFIBT_MODEL_MATCH='W'
 
@@ -19,6 +19,10 @@ wifibt_model_match() {
 	case "$model" in
 	*${WIFIBT_MODEL_MATCH}*) return 0 ;;
 	esac
+	# 无 W 后缀的 DTS 也按 AIC SDIO VID 拉起（DC / D80 / D80L）
+	if cat /sys/bus/sdio/devices/*/uevent 2>/dev/null | grep -qi "C8A1"; then
+		return 0
+	fi
 	return 1
 }
 
