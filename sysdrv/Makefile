@@ -579,6 +579,8 @@ buildroot: prepare
 		cp ${MPV_PATCH_PATH}/0002-change-j1.patch $(BUILDROOT_DIR)/$(BUILDROOT_VER)/package/mpv/ ;\
 	);
 
+	# DW: ensure target defconfig exists before buildroot make
+	cp -f $(SYSDRV_DIR)/tools/board/buildroot/$(BUILDROOT_DEFCONFIG) $(BUILDROOT_DIR)/$(BUILDROOT_VER)/configs/ 2>/dev/null || true
 	$(MAKE) ARCH=$(ARCH) CROSS_COMPILE=$(CROSS_COMPILE) $(BUILDROOT_DEFCONFIG) -C $(BUILDROOT_DIR)/$(BUILDROOT_VER) 
 	$(SYSDRV_DIR)/tools/board/mirror_select/buildroot_mirror_select.sh $(BUILDROOT_DIR)/$(BUILDROOT_VER)/.config
 	$(MAKE) ARCH=$(ARCH) CROSS_COMPILE=$(CROSS_COMPILE) source -C $(BUILDROOT_DIR)/$(BUILDROOT_VER) 
