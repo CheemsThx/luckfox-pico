@@ -1,0 +1,279 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+/*
+ * Luckfox Pico Ultra W 自研板 — SPI NAND + AIC8800
+ * WiFi/BT 模组兼容 AIC8800DC 与 AIC8800D80/D80L（同一 SDIO + UART1 脚位）
+ * WiFi SDIO: GPIO3 sdmmc0 / &sdmmc（与官方 Ultra 相同）
+ * GPIO2 sdmmc1m0 / &sdio 为 SD 卡，勿用于 WiFi
+ */
+
+/dts-v1/;
+#include "rv1106.dtsi"
+#include "rv1106-luckfox-pico-ultra-ipc.dtsi"
+#include <dt-bindings/input/input.h>
+#include <dt-bindings/display/media-bus-format.h>
+
+/ {
+	model = "Luckfox Pico Ultra W Custom";
+	compatible = "rockchip,rv1103g-38x38-ipc-v10", "rockchip,rv1106g3";
+
+	restart-poweroff {
+		compatible = "restart-poweroff";
+	};
+
+	/* WL_EN: ACTIVE_LOW 复位低有效；低保持 100ms 再拉高，再等 500ms 扫 SDIO */
+	sdio_pwrseq: sdio-pwrseq {
+		compatible = "mmc-pwrseq-simple";
+		reset-gpios = <&gpio1 RK_PA2 GPIO_ACTIVE_LOW>;
+		pre-power-on-delay-ms = <100>;
+		post-power-on-delay-ms = <500>;
+	};
+
+	/* WL_HOST_WAKE → GPIO3_B1 */
+	wireless_wlan: wireless-wlan {
+		compatible = "wlan-platdata";
+		WIFI,host_wake_irq = <&gpio3 RK_PB1 GPIO_ACTIVE_HIGH>;
+		status = "okay";
+	};
+
+	wireless_bluetooth: wireless-bluetooth {
+		compatible = "bluetooth-platdata";
+		uart_rts_gpios = <&gpio0 RK_PA5 GPIO_ACTIVE_LOW>;
+		pinctrl-names = "default", "rts_gpio";
+		pinctrl-0 = <&uart1m0_rtsn>;
+		pinctrl-1 = <&uart1_gpios>;
+		/* BT_WAKE_HOST → GPIO3_B0 */
+		BT,wake_gpio     = <&gpio3 RK_PB0 GPIO_ACTIVE_HIGH>;
+		/* HOST_WAKE_BT → GPIO0_A2 */
+		BT,wake_host_irq = <&gpio0 RK_PA2 GPIO_ACTIVE_HIGH>;
+		status = "okay";
+	};
+};
+
+/**********SPI NAND (Winbond W25N02KVZEIR, 2Gbit/256MB)**********/
+&sfc {
+	status = "okay";
+	pinctrl-names = "default";
+	pinctrl-0 = <&fspi_pins &fspi_cs0>;
+
+	flash@0 {
+		compatible = "spi-nand";
+		reg = <0>;
+		spi-max-frequency = <75000000>;
+		spi-rx-bus-width = <4>;
+		spi-tx-bus-width = <1>;
+	};
+};
+
+&emmc {
+	status = "disabled";
+};
+
+&fiq_debugger {
+	rockchip,irq-mode-enable = <1>;
+	status = "okay";
+};
+
+/**********SDIO-WIFI on GPIO3 sdmmc0（与官方 Ultra 一致）**********
+ * CLK/CMD: GPIO3_A4/A5  D0-D3: GPIO3_A3/A2/A7/A6  DET: GPIO3_A1
+ */
+&sdmmc {
+	max-frequency = <50000000>;
+	bus-width = <4>;
+	cap-sd-highspeed;
+	cap-sdio-irq;
+	keep-power-in-suspend;
+	non-removable;
+	rockchip,default-sample-phase = <90>;
+	supports-sdio;
+	mmc-pwrseq = <&sdio_pwrseq>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&sdmmc0_clk &sdmmc0_cmd &sdmmc0_bus4 &sdmmc0_det>;
+	status = "okay";
+};
+
+/**********SD 卡 TF（GPIO2 sdmmc1m0 / &sdio，与原理图一致）**********
+ * D0-D3: GPIO2_A1/A0/A5/A4  CLK: GPIO2_A2  CMD: GPIO2_A3
+ */
+&sdio {
+	max-frequency = <50000000>;
+	no-sdio;
+	no-mmc;
+	supports-sd;
+	bus-width = <4>;
+	cap-mmc-highspeed;
+	cap-sd-highspeed;
+	disable-wp;
+	pinctrl-names = "default";
+	pinctrl-0 = <&sdmmc1m0_cmd &sdmmc1m0_clk &sdmmc1m0_bus4>;
+	status = "okay";
+};
+
+/**********CSI 2-lane（GPIO3_B0/B1 留给 WiFi/BT 唤醒，不用 mipi_pins 的 d3）**********
+ * 官方 Ultra dtsi 默认 okay；此前为避让唤醒脚整段关掉。
+ * 传感器 data-lanes = <1 2>，只需 ck0+d0+d1。勿开 dphy1/mipi1/vir1，勿重开 LCD。
+ * i2c4 保持 dtsi 的 i2c4m2（GPIO3_PC7/PD0），勿改 m0（与 SD GPIO2 冲突）。
+ */
+&csi2_dphy0 {
+	status = "okay";
+};
+
+&mipi0_csi2 {
+	status = "okay";
+};
+
+&rkcif_mipi_lvds {
+	status = "okay";
+	pinctrl-names = "default";
+	pinctrl-0 = <&mipi_pins_2lane>;
+};
+
+&rkcif_mipi_lvds_sditf {
+	status = "okay";
+};
+
+&rkisp_vir0 {
+	status = "okay";
+};
+
+&i2c4 {
+	status = "okay";
+};
+
+/**********自研板无 LCD/触摸：释放 GPIO2 给 SD 卡 **********
+ * Ultra dtsi 的 RGB 使用 lcd_d8~d13 = GPIO2_A0~A5，与 sdmmc1m0 冲突
+ */
+/ {
+	panel: panel {
+		status = "disabled";
+	};
+
+	backlight: backlight {
+		status = "disabled";
+	};
+};
+
+&display_subsystem {
+	status = "disabled";
+};
+
+&rgb {
+	status = "disabled";
+};
+
+&rgb_in_vop {
+	status = "disabled";
+};
+
+&route_rgb {
+	status = "disabled";
+};
+
+&vop {
+	status = "disabled";
+};
+
+&pwm1 {
+	status = "disabled";
+};
+
+&i2c3 {
+	status = "disabled";
+};
+
+/**********ETH**********/
+&gmac {
+	status = "okay";
+};
+
+/**********USB**********/
+&usbdrd_dwc3 {
+	status = "okay";
+	dr_mode = "peripheral";
+};
+
+/**********RTC**********/
+&rtc {
+	status = "okay";
+};
+
+/**********BT**********/
+&uart1 {
+	status = "okay";
+	pinctrl-names = "default";
+	pinctrl-0 = <&uart1m0_xfer &uart1m0_ctsn>;
+};
+
+/**********ESP32-C3（U5）UART3 M0：GPIO1_A0 TX / GPIO1_A1 RX**********
+ * 覆盖 ipc dtsi 的 <&uart3m0_xfer &uart3m1_xfer>。uart3m1 是 GPIO1_D0/D1，本板不用。
+ * U5 ESP_RX/ESP_TX 只接调试座，不是和 1106 通讯的那对。
+ * 别名 serial3（rv1106.dtsi）→ /dev/ttyS3。勿改 &uart1（AIC HCI / ttyS1）。
+ */
+&uart3 {
+	status = "okay";
+	pinctrl-names = "default";
+	pinctrl-0 = <&uart3m0_xfer>;
+};
+
+&pinctrl {
+	sdmmc0 {
+		sdmmc0_det: sdmmc0-det {
+			rockchip,pins = <3 RK_PA1 1 &pcfg_pull_down>;
+		};
+	};
+
+	wireless-bluetooth {
+		uart1_gpios: uart1-gpios {
+			rockchip,pins = <0 RK_PA5 RK_FUNC_GPIO &pcfg_pull_none>;
+		};
+	};
+
+	mipi {
+		mipi_pins_2lane: mipi-pins-2lane {
+			rockchip,pins =
+				<3 RK_PC0 2 &pcfg_pull_none>,
+				<3 RK_PC1 2 &pcfg_pull_none>,
+				<3 RK_PC2 2 &pcfg_pull_none>,
+				<3 RK_PC3 2 &pcfg_pull_none>,
+				<3 RK_PB6 2 &pcfg_pull_none>,
+				<3 RK_PB7 2 &pcfg_pull_none>;
+		};
+	};
+};
+
+/********** ram oops / pstore（DW-SDK-003）**********
+ * 本板 DRAM 256MB：物理 0x00000000–0x10000000（DTS 无 memory{}，由 U-Boot/ATAGS 传入）。
+ * 禁止复制 rv1106-thunder-boot.dtsi 的 ramoops@0x7c000 / 0x3000：那是 128MB thunder-boot
+ * 板上 MCU log（record/console 均为 0），不是内核 console，且 0x7c000 落在本板
+ * SPL BSS/栈 0x001fe000 与 U-Boot TEXT 0x00200000 之前，会被下次启动冲掉。
+ *
+ * U-Boot ENV_MEM_LAYOUT（rv1106_common.h，非 CONFIG_ENV_MEM_LAYOUT 时）：
+ *   Image   0–8MB     kernel_addr_r=0x00008000；内核 TEXT_OFFSET=0x00208000
+ *   zImage  8–12MB    kernel_addr_c=0x00808000
+ *   fdt    12–13MB    fdt_addr_r=0x00c00000（本板 dtb ≪ 1MB）
+ *   （空隙 13–14MB） ← ramoops 放这里
+ *   ramdisk 14MB+     ramdisk_addr_r=0x00e00000；CONFIG_SYS_LOAD_ADDR=0x00e00800
+ * SPL TEXT 0x0、BSS/栈 0x001fe000；U-Boot TEXT 0x00200000、INIT_SP 0x00400000。
+ * dtsi reserved-memory：mmc_ecsd@0x3f000 size 4K；drm-logo@0 size 0（占位）。
+ * CMA：bootargs rk_dma_heap_cma=66M，且 DT linux,cma 10M reusable+inactive，均无
+ * 固定基址，arm_memblock_init 里 dma_contiguous_reserve 与 rk_dma_heap_cma_setup
+ * 从 DRAM 高端切，远离 13MB。ramoops 256KB 不占 CMA。
+ * 不设 no-map：ramoops 需要内核映射。
+ */
+&reserved_memory {
+	ramoops@d00000 {
+		compatible = "ramoops";
+		reg = <0x00d00000 0x00040000>; /* 13MB，256KB */
+		record-size = <0x8000>;        /* 32KB × 约 4 条 oops/panic */
+		console-size = <0x20000>;      /* 128KB printk，watchdog 硬复位也能留尾 */
+		ftrace-size = <0x0>;
+		pmsg-size = <0x0>;
+	};
+};
+
+/**********SPI**********/
+&spi0 {
+	status = "disabled";
+	spidev@0 {
+		spi-max-frequency = <50000000>;
+	};
+};

@@ -1,0 +1,10 @@
+#!/bin/sh
+# AIC8800 WiFi/BLE: see /etc/init.d/S35wifibt
+
+case "$1" in
+	start|stop|restart)
+		;;
+	*)
+		exit 1
+		;;
+esac

@@ -1,0 +1,122 @@
+#!/bin/sh
+# DW-SDK-003：在 dw-rec / RkLunch（S21appinit）之前挂载 pstore，并转存上一轮内核记录。
+# 本脚本名 S20pstore 排在 S20linkmount 之后（先挂 userdata），排在 S21appinit 之前。
+# 不写 /root/config.json；不做诊断 tar.gz。
+
+PSTORE_MNT=/sys/fs/pstore
+SD_BASE=/mnt/sdcard/dw-pstore
+UD_BASE=/userdata/dw-pstore
+# userdata 无 SD 时的 pstore 上限（KB），给应用配置留余量；有 SD 则不走这条路径
+UD_MAX_KB=8192
+
+is_mounted() {
+	mp="$1"
+	if command -v mountpoint >/dev/null 2>&1; then
+		mountpoint -q "$mp" 2>/dev/null && return 0
+	fi
+	mount | grep -qw "$mp"
+}
+
+wait_mount() {
+	mp="$1"
+	n=0
+	while [ "$n" -lt 20 ]; do
+		is_mounted "$mp" && return 0
+		sleep 0.2
+		n=$((n + 1))
+	done
+	return 1
+}
+
+dir_kb() {
+	du -sk "$1" 2>/dev/null | awk '{print $1}'
+}
+
+prune_userdata() {
+	base="$1"
+	[ -d "$base" ] || return 0
+	while true; do
+		sz=$(dir_kb "$base")
+		[ -n "$sz" ] || break
+		[ "$sz" -le "$UD_MAX_KB" ] && break
+		oldest=$(ls -1 "$base" 2>/dev/null | grep -E '^[0-9]{8}-' | sort | head -n 1)
+		[ -n "$oldest" ] || break
+		rm -rf "$base/$oldest"
+	done
+}
+
+mount_pstore() {
+	mkdir -p "$PSTORE_MNT"
+	if ! grep -qw "$PSTORE_MNT" /proc/mounts 2>/dev/null; then
+		mount -t pstore pstore "$PSTORE_MNT" || return 1
+	fi
+	return 0
+}
+
+copy_records() {
+	dest="$1"
+	copied=0
+	for f in "$PSTORE_MNT"/console-ramoops* "$PSTORE_MNT"/dmesg-ramoops*; do
+		[ -f "$f" ] || continue
+		cp -a "$f" "$dest/" || return 1
+		copied=1
+	done
+	[ "$copied" -eq 1 ]
+}
+
+clear_pstore() {
+	for f in "$PSTORE_MNT"/console-ramoops* "$PSTORE_MNT"/dmesg-ramoops*; do
+		[ -f "$f" ] || continue
+		rm -f "$f"
+	done
+}
+
+save_pstore() {
+	ts=$(date +%Y%m%d-%H%M%S 2>/dev/null)
+	[ -n "$ts" ] || ts=unknown
+
+	dest_base=""
+	if wait_mount /mnt/sdcard && [ -w /mnt/sdcard ]; then
+		dest_base="$SD_BASE"
+	elif is_mounted /userdata && [ -w /userdata ]; then
+		dest_base="$UD_BASE"
+	else
+		echo "S20pstore: no writable /mnt/sdcard or /userdata, skip dump"
+		return 0
+	fi
+
+	mkdir -p "$dest_base/$ts" || return 1
+	if copy_records "$dest_base/$ts"; then
+		ln -sfn "$ts" "$dest_base/latest"
+		clear_pstore
+		if [ "$dest_base" = "$UD_BASE" ]; then
+			prune_userdata "$UD_BASE"
+		fi
+		echo "S20pstore: saved to $dest_base/$ts"
+	else
+		rmdir "$dest_base/$ts" 2>/dev/null
+		echo "S20pstore: pstore empty, nothing to save"
+	fi
+}
+
+start() {
+	if ! mount_pstore; then
+		echo "S20pstore: mount pstore failed"
+		return 1
+	fi
+	save_pstore
+}
+
+stop() {
+	return 0
+}
+
+case "$1" in
+	start) start ;;
+	stop) stop ;;
+	restart) start ;;
+	*)
+		echo "Usage: $0 {start|stop|restart}"
+		exit 1
+		;;
+esac
