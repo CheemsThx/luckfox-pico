@@ -1,5 +1,5 @@
 # DW: ported from main_axiarz SPI NAND Ultra onto 5.10.110 for lab legacy smoke.
-# WiFi SSID/PSK intentionally blank in git.
+# WiFi: same lab defaults as main_axiarz Ultra SPI NAND BoardConfig.
 # RK_ENABLE_RECOVERY disabled: e79fd sysdrv Makefile RAMDISK recipe tab bug.
 #!/bin/bash
 
@@ -73,8 +73,8 @@ export RK_ENABLE_WIFI=y
 # AIC8800DC 是 SDIO 驱动包名；运行时按 SDIO ID 兼容 DC 与 D80/D80L，两套固件一起打包
 export RK_ENABLE_WIFI_CHIP=AIC8800DC
 
-export LF_WIFI_SSID=""
-export LF_WIFI_PSK=""
+
+
 
 #################################################
 #  PRE and POST
