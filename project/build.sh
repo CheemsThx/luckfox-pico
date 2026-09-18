@@ -4,6 +4,23 @@ set -eE
 export LC_ALL=C
 export LD_LIBRARY_PATH=
 
+# DW: sanitize PATH for buildroot (no spaces/tabs/newlines)
+_DW_ROOT="$(cd "$(dirname "$(realpath "$0")")/.." && pwd)"
+_DW_TC="$_DW_ROOT/tools/linux/toolchain/arm-rockchip830-linux-uclibcgnueabihf/bin"
+case ":$PATH:" in
+  *" "*|*$'\t'*|*$'\n'*)
+    export PATH="$_DW_TC:/usr/lib/ccache:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+    ;;
+  *)
+    if [ -d "$_DW_TC" ]; then
+      case ":$PATH:" in
+        *":$_DW_TC:"*) ;;
+        *) export PATH="$_DW_TC:$PATH" ;;
+      esac
+    fi
+    ;;
+esac
+
 function unset_env_config_rk() {
 	local tmp_file=$(mktemp)
 	env | grep -oh "^RK_.*=" >$tmp_file || true
