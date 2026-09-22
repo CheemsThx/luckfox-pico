@@ -27,12 +27,15 @@
 #include "md5.h"
 #include "aic8800dc_compat.h"
 #include "aic8800d80_compat.h"
+#include "aic8800d80n_compat.h"
+#include "aic8800d80x2_compat.h"
 #include "aicwf_firmware_array.h"
 #define FW_PATH_MAX 200
 
 extern int adap_test;
 extern char aic_fw_path[FW_PATH_MAX];
 extern struct aic_sdio_dev *aicbsp_sdiodev;
+extern u8 chip_sub_id;
 
 static void cmd_dump(const struct rwnx_cmd *cmd)
 {
@@ -116,7 +119,15 @@ static int cmd_mgr_queue(struct rwnx_cmd_mgr *cmd_mgr, struct rwnx_cmd *cmd)
 
 	if (!(cmd->flags & RWNX_CMD_FLAG_NONBLOCK)) {
 		unsigned long tout = msecs_to_jiffies(RWNX_80211_CMD_TIMEOUT_MS * cmd_mgr->queue_sz);
-		if (!wait_for_completion_killable_timeout(&cmd->complete, tout)) {
+		long ret = wait_for_completion_killable_timeout(&cmd->complete, tout);
+		if (ret > 0)
+		{
+			kfree(cmd);
+			cmd=NULL;
+			//printk("%s cmd free!\n",__func__);
+		}
+		else if (0 == ret)
+		{
 			printk(KERN_CRIT"cmd timed-out\n");
 			cmd_dump(cmd);
 			spin_lock_bh(&cmd_mgr->lock);
@@ -127,8 +138,10 @@ static int cmd_mgr_queue(struct rwnx_cmd_mgr *cmd_mgr, struct rwnx_cmd *cmd)
 			}
 			spin_unlock_bh(&cmd_mgr->lock);
 			err = -ETIMEDOUT;
-		} else {
-			kfree(cmd);
+		}
+		else
+		{
+			printk("%s wait_for_completion_killable_timeout is interrupted by -ERESTARTSYS!\n",__func__);
 		}
 	} else {
 		cmd->result = 0;
@@ -242,9 +255,12 @@ void rwnx_cmd_mgr_init(struct rwnx_cmd_mgr *cmd_mgr)
 
 void rwnx_cmd_mgr_deinit(struct rwnx_cmd_mgr *cmd_mgr)
 {
-	cmd_mgr->print(cmd_mgr);
-	cmd_mgr->drain(cmd_mgr);
-	cmd_mgr->print(cmd_mgr);
+	if(cmd_mgr->print)
+		cmd_mgr->print(cmd_mgr);
+	if(cmd_mgr->drain)
+		cmd_mgr->drain(cmd_mgr);
+	if(cmd_mgr->print)
+		cmd_mgr->print(cmd_mgr);
 	memset(cmd_mgr, 0, sizeof(*cmd_mgr));
 }
 
@@ -262,7 +278,10 @@ void rwnx_set_cmd_tx(void *dev, struct lmac_msg *msg, uint len)
     if (sdiodev->chipid == PRODUCT_ID_AIC8801 || sdiodev->chipid == PRODUCT_ID_AIC8800DC ||
         sdiodev->chipid == PRODUCT_ID_AIC8800DW)
         buffer[3] = 0x0;
-    else if (sdiodev->chipid == PRODUCT_ID_AIC8800D80)
+    else if (sdiodev->chipid == PRODUCT_ID_AIC8800D80 ||
+		sdiodev->chipid == PRODUCT_ID_AIC8800D80N ||
+		sdiodev->chipid == PRODUCT_ID_AIC8800D80WN ||
+		sdiodev->chipid == PRODUCT_ID_AIC8800D80X2)
 	    buffer[3] = crc8_ponl_107(&buffer[0], 3); // crc8
 	index += 4;
 	//there is a dummy word
@@ -984,7 +1003,7 @@ int aicwf_plat_rftest_load_8800dc(struct aic_sdio_dev *sdiodev)
     return ret;
 }
 
-#ifdef CONFIG_DPD
+#if defined(CONFIG_DPD) || defined(CONFIG_LOFT_CALIB)
 int aicwf_misc_ram_valid_check_8800dc(struct aic_sdio_dev *sdiodev, int *valid_out)
 {
     int ret = 0;
@@ -1054,9 +1073,7 @@ int aicwf_misc_ram_valid_check_8800dc(struct aic_sdio_dev *sdiodev, int *valid_o
     }
     return ret;
 }
-#endif
 
-#if defined(CONFIG_DPD) || defined(CONFIG_LOFT_CALIB)
 int aicwf_plat_calib_load_8800dc(struct aic_sdio_dev *sdiodev)
 {
     int ret = 0;
@@ -1113,6 +1130,11 @@ EXPORT_SYMBOL(is_file_exist);
 #ifdef CONFIG_DPD
 rf_misc_ram_lite_t dpd_res = {{0},};
 EXPORT_SYMBOL(dpd_res);
+#endif
+
+#ifdef CONFIG_LOFT_CALIB
+rf_misc_ram_lite_t loft_res_local = {{0},};
+EXPORT_SYMBOL(loft_res_local);
 #endif
 
 static int rwnx_plat_patch_load(struct aic_sdio_dev *sdiodev)
@@ -1175,7 +1197,7 @@ static int rwnx_plat_patch_load(struct aic_sdio_dev *sdiodev)
                 #elif defined(CONFIG_LOFT_CALIB)
                 if (1) {
                     AICWFDBG(LOGINFO, "loft calib\n");
-                    ret = aicwf_loft_calib_8800dc(sdiodev);
+                    ret = aicwf_loft_calib_8800dc(sdiodev, &loft_res_local);
                     if (ret) {
                         AICWFDBG(LOGINFO, "loft calib fail: %d\n", ret);
                         return ret;
@@ -1206,8 +1228,23 @@ static int rwnx_plat_patch_load(struct aic_sdio_dev *sdiodev)
                         return ret;
                     }
                 }
-                #endif
-                #endif
+                #endif/*CONFIG_FORCE_DPD_CALIB*/
+                #elif defined(CONFIG_LOFT_CALIB)
+                {
+                    AICWFDBG(LOGINFO, "patch load\n");
+                    ret = aicwf_plat_patch_load_8800dc(sdiodev);
+                    if (ret) {
+                        AICWFDBG(LOGINFO, "load patch bin fail: %d\n", ret);
+                        return ret;
+                    }
+                    AICWFDBG(LOGINFO, "loft calib\n");
+                    ret = aicwf_loft_calib_8800dc(sdiodev, &loft_res_local);
+                    if (ret) {
+                        AICWFDBG(LOGINFO, "loft calib fail: %d\n", ret);
+                        return ret;
+                    }
+                }
+                #endif/*CONFIG_DPD*/
                 ret = aicwf_plat_rftest_load_8800dc(sdiodev);
                 if (ret) {
                     AICWFDBG(LOGINFO, "load rftest bin fail: %d\n", ret);
@@ -1373,14 +1410,95 @@ err:
 }
 int aicbt_patch_info_unpack(struct aicbt_patch_info_t *patch_info, struct aicbt_patch_table *head_t)
 {
+    uint8_t *patch_info_array = (uint8_t*)patch_info;
+    int base_len = 0;
+    int memcpy_len = 0;
+    
     if (AICBT_PT_INF == head_t->type) {
-        patch_info->info_len = head_t->len;
-        if(patch_info->info_len == 0)
+        base_len = ((offsetof(struct aicbt_patch_info_t,  ext_patch_nb_addr) - offsetof(struct aicbt_patch_info_t,  adid_addrinf) )/sizeof(uint32_t))/2;
+        AICWFDBG(LOGDEBUG, "%s head_t->len:%d base_len:%d \r\n", __func__, head_t->len, base_len);
+
+        if (head_t->len > base_len){
+            patch_info->info_len = base_len;
+            memcpy_len = patch_info->info_len + 1;//include ext patch nb     
+        } else{
+            patch_info->info_len = head_t->len;
+            memcpy_len = patch_info->info_len;
+        }
+	head_t->len = patch_info->info_len;
+        AICWFDBG(LOGDEBUG, "%s memcpy_len:%d \r\n", __func__, memcpy_len);   
+
+        if (patch_info->info_len == 0)
             return 0;
-        memcpy(&patch_info->adid_addrinf, head_t->data, patch_info->info_len * sizeof(uint32_t) * 2);
+       
+        memcpy(((patch_info_array) + sizeof(patch_info->info_len)), 
+            head_t->data, 
+            memcpy_len * sizeof(uint32_t) * 2);
+        AICWFDBG(LOGDEBUG, "%s adid_addrinf:%x addr_adid:%x \r\n", __func__, 
+            ((struct aicbt_patch_info_t *)patch_info_array)->adid_addrinf,
+            ((struct aicbt_patch_info_t *)patch_info_array)->addr_adid);
+
+        if (patch_info->ext_patch_nb > 0){
+            int index = 0;
+            patch_info->ext_patch_param = (uint32_t *)(head_t->data + ((memcpy_len) * 2));
+            
+            for(index = 0; index < patch_info->ext_patch_nb; index++){
+                AICWFDBG(LOGDEBUG, "%s id:%x addr:%x \r\n", __func__, 
+                    *(patch_info->ext_patch_param + (index * 2)),
+                    *(patch_info->ext_patch_param + (index * 2) + 1));
+            }
+        }
+
     }
     return 0;
 }
+
+int aicbt_ext_patch_data_load(struct aic_sdio_dev *sdiodev, struct aicbt_patch_info_t *patch_info)
+{
+    int ret = 0;
+    uint32_t ext_patch_nb = patch_info->ext_patch_nb;
+    char ext_patch_file_name[50];
+    int index = 0;
+    uint32_t id = 0;
+    uint32_t addr = 0;
+
+    
+    if (ext_patch_nb > 0){
+        if (sdiodev->chipid == PRODUCT_ID_AIC8800DC) {
+			AICWFDBG(LOGDEBUG, "[0x40506004]: 0x04318000\n");
+			ret = rwnx_send_dbg_mem_write_req(sdiodev, 0x40506004, 0x04318000);
+			AICWFDBG(LOGDEBUG, "[0x40506004]: 0x04338000\n");
+			ret = rwnx_send_dbg_mem_write_req(sdiodev, 0x40506004, 0x04338000);
+        } else if (sdiodev->chipid == PRODUCT_ID_AIC8800D80X2) {
+			AICWFDBG(LOGDEBUG, "[0x40580000]: 0x00040220\n");
+			ret = rwnx_send_dbg_mem_write_req(sdiodev, 0x40580000, 0x00040220);
+        } else if (sdiodev->chipid == PRODUCT_ID_AIC8800D80N ||
+			sdiodev->chipid == PRODUCT_ID_AIC8800D80WN) {
+			AICWFDBG(LOGDEBUG, "[0x40506004]: 0x04338000\n");
+			ret = rwnx_send_dbg_mem_write_req(sdiodev, 0x40506004, 0x04338000);
+			AICWFDBG(LOGDEBUG, "[0x40509000]: 0x00040000\n");
+			ret = rwnx_send_dbg_mem_write_req(sdiodev, 0x40509000, 0x00040000);
+        }
+        for (index = 0; index < patch_info->ext_patch_nb; index++){
+            id = *(patch_info->ext_patch_param + (index * 2));
+            addr = *(patch_info->ext_patch_param + (index * 2) + 1); 
+            memset(ext_patch_file_name, 0, sizeof(ext_patch_file_name));
+            sprintf(ext_patch_file_name,"%s%d.bin",
+                aicbsp_firmware_list[aicbsp_info.cpmode].bt_ext_patch,
+                id);
+            AICWFDBG(LOGDEBUG, "%s ext_patch_file_name:%s ext_patch_id:%x ext_patch_addr:%x \r\n",
+                __func__,ext_patch_file_name, id, addr);
+            
+            if (rwnx_plat_bin_fw_upload_android(sdiodev, addr, ext_patch_file_name)) {
+                ret = -1;
+                break;
+            }
+        }
+    }
+    return ret;
+}
+
+
 int aicbt_patch_trap_data_load(struct aic_sdio_dev *sdiodev, struct aicbt_patch_table *head)
 {
 	struct aicbt_patch_info_t patch_info = {
@@ -1393,6 +1511,8 @@ int aicbt_patch_trap_data_load(struct aic_sdio_dev *sdiodev, struct aicbt_patch_
         .reset_val         = 0,
         .adid_flag_addr    = 0,
         .adid_flag         = 0,
+        .ext_patch_nb_addr = 0,
+        .ext_patch_nb      = 0,
 	};
     if(head == NULL){
         return -1;
@@ -1433,11 +1553,27 @@ int aicbt_patch_trap_data_load(struct aic_sdio_dev *sdiodev, struct aicbt_patch_
             printk("%s, aicbt_patch_info_unpack fail\n", __func__);
             return -1;
         }
+	} else if(sdiodev->chipid == PRODUCT_ID_AIC8800D80X2){
+        aicbt_patch_info_unpack(&patch_info, head);
+        if(patch_info.info_len == 0) {
+            printk("%s, aicbt_patch_info_unpack fail\n", __func__);
+            return -1;
+        }
+	} else if(sdiodev->chipid == PRODUCT_ID_AIC8800D80N ||
+		sdiodev->chipid == PRODUCT_ID_AIC8800D80WN){
+		aicbt_patch_info_unpack(&patch_info, head);
+		if(patch_info.info_len == 0) {
+			printk("%s, aicbt_patch_info_unpack fail\n", __func__);
+			return -1;
+		}
+
 	}
 
 	if (rwnx_plat_bin_fw_upload_android(sdiodev, patch_info.addr_adid, aicbsp_firmware_list[aicbsp_info.cpmode].bt_adid))
 		return -1;
 	if (rwnx_plat_bin_fw_upload_android(sdiodev, patch_info.addr_patch, aicbsp_firmware_list[aicbsp_info.cpmode].bt_patch))
+		return -1;
+	if (aicbt_ext_patch_data_load(sdiodev, &patch_info))
 		return -1;
 	return 0;
 
@@ -1475,7 +1611,32 @@ static struct aicbt_info_t aicbt_info[]={
         .uart_flowctrl = AICBT_UART_FC_DEFAULT,
         .lpm_enable    = AICBT_LPM_ENABLE_DEFAULT,
         .txpwr_lvl     = AICBT_TXPWR_LVL_DEFAULT_8800d80,
-    }//PRODUCT_ID_AIC8800D80
+    },//PRODUCT_ID_AIC8800D80
+        {
+        .btmode        = AICBT_BTMODE_DEFAULT_8800d80n,
+        .btport        = AICBT_BTPORT_DEFAULT,
+        .uart_baud     = AICBT_UART_BAUD_DEFAULT,
+        .uart_flowctrl = AICBT_UART_FC_DEFAULT,
+        .lpm_enable    = AICBT_LPM_ENABLE_DEFAULT,
+        .txpwr_lvl     = AICBT_TXPWR_LVL_DEFAULT_8800d80n,
+    },//PRODUCT_ID_AIC8800D80N
+            {
+        .btmode        = AICBT_BTMODE_DEFAULT_8800d80n,
+        .btport        = AICBT_BTPORT_DEFAULT,
+        .uart_baud     = AICBT_UART_BAUD_DEFAULT,
+        .uart_flowctrl = AICBT_UART_FC_DEFAULT,
+        .lpm_enable    = AICBT_LPM_ENABLE_DEFAULT,
+        .txpwr_lvl     = AICBT_TXPWR_LVL_DEFAULT_8800d80n,
+    },//PRODUCT_ID_AIC8800D80WN
+    {
+        .btmode        = AICBT_BTMODE_DEFAULT_8800d80x2,
+        .btport        = AICBT_BTPORT_DEFAULT,
+        .uart_baud     = AICBT_UART_BAUD_DEFAULT,
+        .uart_flowctrl = AICBT_UART_FC_DEFAULT,
+        .lpm_enable    = AICBT_LPM_ENABLE_DEFAULT,
+        .txpwr_lvl     = AICBT_TXPWR_LVL_DEFAULT_8800d80x2,
+    }//PRODUCT_ID_AIC8800D80x2
+
 };
 
 
@@ -1499,7 +1660,7 @@ int aicbt_patch_table_load(struct aic_sdio_dev *sdiodev, struct aicbt_patch_tabl
     		*(data + 9)  = aicbt_info[sdiodev->chipid].btport;
     		*(data + 11) = aicbt_info[sdiodev->chipid].uart_baud;
     		*(data + 13) = aicbt_info[sdiodev->chipid].uart_flowctrl;
-    		*(data + 15) = aicbt_info[sdiodev->chipid].lpm_enable;
+    		*(data + 15) = (aicbsp_info.cpmode == AICBSP_CPMODE_WORK?aicbt_info[sdiodev->chipid].lpm_enable:0);
     		*(data + 17) = aicbt_info[sdiodev->chipid].txpwr_lvl;
 
             printk("%s bt btmode[%d]:%d \r\n", __func__, sdiodev->chipid, aicbt_info[sdiodev->chipid].btmode);
@@ -1521,7 +1682,9 @@ int aicbt_patch_table_load(struct aic_sdio_dev *sdiodev, struct aicbt_patch_tabl
     		data += 2;
     	}
     	if (p->type == AICBT_PT_PWRON)
-    		udelay(500);
+    		mdelay(100);
+		
+		//udelay(500);
     }
 
 
@@ -1561,7 +1724,7 @@ static int aicwifi_start_from_bootrom(struct aic_sdio_dev *sdiodev)
 	int ret = 0;
 
 	/* memory access */
-	const u32 fw_addr = RAM_FMAC_FW_ADDR;
+	const u32 fw_addr = (sdiodev->chipid == PRODUCT_ID_AIC8800D80X2)?RAM_FMAC_FW_ADDR_D80X2:RAM_FMAC_FW_ADDR;
 	struct dbg_start_app_cfm start_app_cfm;
 
 	/* fw start */
@@ -1739,6 +1902,8 @@ static int aicwifi_patch_config(struct aic_sdio_dev *sdiodev)
 int aicwifi_init(struct aic_sdio_dev *sdiodev)
 {
 	int ret = 0;
+	u32 fw_addr = (sdiodev->chipid == PRODUCT_ID_AIC8800D80X2)?RAM_FMAC_FW_ADDR_D80X2:RAM_FMAC_FW_ADDR;
+
 	if(sdiodev->chipid == PRODUCT_ID_AIC8801){
 		#ifdef CONFIG_M2D_OTA_AUTO_SUPPORT
 		if (testmode == FW_M2D_OTA_MODE) {
@@ -1750,6 +1915,12 @@ int aicwifi_init(struct aic_sdio_dev *sdiodev)
 		if (rwnx_plat_bin_fw_upload_android(sdiodev, RAM_FMAC_FW_ADDR, aicbsp_firmware_list[aicbsp_info.cpmode].wl_fw)) {
 			printk("download wifi fw fail\n");
 			return -1;
+		}
+		if (testmode == FW_NORMAL_MODE) {
+			if (rwnx_plat_bin_fw_upload_android(sdiodev, RAM_FMAC_FW_PATCH_ADDR, RAM_FMAC_FW_PATCH_NAME)) {
+				printk("download wifi fw patch fail\n");
+				return -1;
+			}
 		}
 
 		if (aicwifi_patch_config(sdiodev)) {
@@ -1785,7 +1956,50 @@ int aicwifi_init(struct aic_sdio_dev *sdiodev)
 		printk("############ aicwf_patch_config_8800dc done\n");
 
 		start_from_bootrom_8800DC(sdiodev);
-	}else if(sdiodev->chipid == PRODUCT_ID_AIC8800D80){
+	}else if(sdiodev->chipid == PRODUCT_ID_AIC8800D80N ||
+		sdiodev->chipid == PRODUCT_ID_AIC8800D80WN){
+		printk("############ aicwifi_init begin \n");
+		system_config_8800d80n(sdiodev);
+		if (testmode == FW_NORMAL_MODE) {
+			ret = aicwf_plat_patch_load_8800d80n(sdiodev);
+			if (ret) {
+				AICWFDBG(LOGERROR, "patch upload fail: %d\n", ret);
+				return ret;
+			}
+			ret = aicwf_plat_patch_table_load_8800d80n(sdiodev);
+			if (ret) {
+				AICWFDBG(LOGERROR, "patch_tbl upload fail: %d\r\n", ret);
+				return ret;
+			}
+			aicwf_patch_config_8800d80n(sdiodev);
+			ret = aicwf_plat_calib_exec_8800d80n(sdiodev);
+			if (ret) {
+				AICWFDBG(LOGERROR, "plat_calib_exec fail: %d\n", ret);
+				return ret;
+			}
+		} else if (testmode == FW_RFTEST_MODE) {
+			AICWFDBG(LOGINFO, "%s load rftest bin\n", __func__);
+			ret = aicwf_plat_rftest_load_8800d80n(sdiodev);
+			if (ret) {
+				AICWFDBG(LOGERROR, "load rftest bin fail: %d\n", ret);
+				return ret;
+			}
+		}
+		if (testmode == 0) {
+			ret = start_from_bootrom_8800DC(sdiodev);
+			if (ret) {
+				printk("8800d80n wifi start fail\n");
+				return -1;
+			}
+		} else {
+			AICWFDBG(LOGINFO, "%s exec rftest bin\n", __func__);
+			ret = aicwf_plat_rftest_exec_8800d80n(sdiodev);
+			if (ret) {
+				AICWFDBG(LOGERROR, "exec rftest bin fail: %d\n", ret);
+				return ret;
+			}
+		}
+		}else if(sdiodev->chipid == PRODUCT_ID_AIC8800D80){
 		if (rwnx_plat_bin_fw_upload_android(sdiodev, RAM_FMAC_FW_ADDR, aicbsp_firmware_list[aicbsp_info.cpmode].wl_fw)) {
 			printk("8800d80 download wifi fw fail\n");
 			return -1;
@@ -1805,9 +2019,24 @@ int aicwifi_init(struct aic_sdio_dev *sdiodev)
 			printk("8800d80 wifi start fail\n");
 			return -1;
 		}
+	}else if(sdiodev->chipid == PRODUCT_ID_AIC8800D80X2){
+		if (rwnx_plat_bin_fw_upload_android(sdiodev, fw_addr, aicbsp_firmware_list[aicbsp_info.cpmode].wl_fw)) {
+			printk("8800d80x2 download wifi fw fail\n");
+			return -1;
+		}
+
+		if (aicwifi_patch_config_8800d80x2(sdiodev)) {
+			printk("aicwifi_patch_config_8800d80x2 fail\n");
+			return -1;
+		}
+
+		if (aicwifi_start_from_bootrom(sdiodev)) {
+			printk("8800d80x2 wifi start fail\n");
+			return -1;
+		}
 	}
 
-#ifdef CONFIG_GPIO_WAKEUP
+#if (defined(CONFIG_GPIO_WAKEUP) || defined(CONFIG_SDIO_PWRCTRL))
 	if (aicwf_sdio_writeb(sdiodev, sdiodev->sdio_reg.wakeup_reg, 4)) {
 		sdio_err("reg:%d write failed!\n", sdiodev->sdio_reg.wakeup_reg);
 		return -1;
@@ -1948,8 +2177,61 @@ int aicbsp_driver_fw_init(struct aic_sdio_dev *sdiodev)
         if (aicbsp_system_config_8800d80(sdiodev))
             return -1;
 	}
+	else if(sdiodev->chipid == PRODUCT_ID_AIC8800D80X2){
+        btenable = 1;
+		if (rwnx_send_dbg_mem_read_req(sdiodev, mem_addr, &rd_mem_addr_cfm))
+			return -1;
+
+		aicbsp_info.chip_rev = (u8)((rd_mem_addr_cfm.memdata >> 16) & 0x3F);
+			if (aicbsp_info.chip_rev >= (CHIP_REV_U04 + 8))
+				aicbsp_firmware_list = fw_8800d80x2;
+			else{
+					pr_err("aicbsp: %s, unsupport chip rev: %d\n", __func__, aicbsp_info.chip_rev);
+					return -1;
+			}
+	}
+	else if(sdiodev->chipid == PRODUCT_ID_AIC8800D80N ||
+		sdiodev->chipid == PRODUCT_ID_AIC8800D80WN){
+		if(sdiodev->chipid == PRODUCT_ID_AIC8800D80N) {
+			btenable = 1;
+		}
+		if (rwnx_send_dbg_mem_read_req(sdiodev, mem_addr, &rd_mem_addr_cfm)){
+			return -1;
+		}
+
+		aicbsp_info.chip_rev = (u8)((rd_mem_addr_cfm.memdata >> 16) & 0x3F);
+
+		ret = rwnx_send_dbg_mem_read_req(sdiodev, 0x00000020, &rd_mem_addr_cfm);
+		if (ret) {
+			AICWFDBG(LOGERROR, "[0x00000020] rd fail: %d\n", ret);
+			return ret;
+		}
+		chip_sub_id = (u8)(rd_mem_addr_cfm.memdata);
+
+		if (aicbsp_info.chip_rev >= CHIP_REV_U02) {
+			if (chip_sub_id == 1) {
+				aicbsp_firmware_list = fw_8800d80n_u02;
+			} else {
+				aicbsp_firmware_list = fw_8800d80n_u02c;
+			}
+		}
+		else{
+				pr_err("aicbsp: %s, unsupport chip rev: %d\n", __func__, aicbsp_info.chip_rev);
+				return -1;
+		}
+
+	}
 
 	AICWFDBG(LOGINFO, "aicbsp: %s, chip rev: %d\n", __func__, aicbsp_info.chip_rev);
+
+	if(sdiodev->chipid == PRODUCT_ID_AIC8800D80N ||
+		sdiodev->chipid == PRODUCT_ID_AIC8800D80WN){
+		ret = aicwf_plat_cinit_exec_8800d80n(sdiodev);
+		if (ret) {
+			AICWFDBG(LOGERROR, "plat_cinit_exec fail: %d\n", ret);
+			return ret;
+		}
+	}
 
 	#ifndef CONFIG_MCU_MESSAGE
 	if (testmode != 4) {
@@ -1973,7 +2255,10 @@ int aicbsp_get_feature(struct aicbsp_feature_t *feature, char *fw_path)
         aicbsp_sdiodev->chipid == PRODUCT_ID_AIC8800DC ||
         aicbsp_sdiodev->chipid == PRODUCT_ID_AIC8800DW){
 	    feature->sdio_clock = FEATURE_SDIO_CLOCK;
-	}else if (aicbsp_sdiodev->chipid == PRODUCT_ID_AIC8800D80){
+	}else if (aicbsp_sdiodev->chipid == PRODUCT_ID_AIC8800D80 ||
+		aicbsp_sdiodev->chipid == PRODUCT_ID_AIC8800D80N ||
+		aicbsp_sdiodev->chipid == PRODUCT_ID_AIC8800D80WN ||
+		aicbsp_sdiodev->chipid == PRODUCT_ID_AIC8800D80X2){
         feature->sdio_clock = FEATURE_SDIO_CLOCK_V3;
 	}
 	feature->sdio_phase = FEATURE_SDIO_PHASE;
@@ -1983,9 +2268,11 @@ int aicbsp_get_feature(struct aicbsp_feature_t *feature, char *fw_path)
 	if(fw_path != NULL){
 		sprintf(fw_path,"%s", AICBSP_FW_PATH);
 	}
+    
     sdio_dbg("%s, set FEATURE_SDIO_CLOCK %d MHz\n", __func__, feature->sdio_clock/1000000);
 	return 0;
 }
+
 EXPORT_SYMBOL_GPL(aicbsp_get_feature);
 
 #ifdef CONFIG_RESV_MEM_SUPPORT

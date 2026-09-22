@@ -453,6 +453,53 @@ int aicwf_fdrv_dpd_result_load_8800dc(struct rwnx_hw *rwnx_hw, rf_misc_ram_lite_
 #endif
 #endif
 
+#if defined(CONFIG_LOFT_CALIB)
+extern rf_misc_ram_lite_t loft_res_local;
+
+int aicwf_fdrv_loft_result_apply_8800dc(struct rwnx_hw *rwnx_hw, rf_misc_ram_lite_t *loft_res)
+{
+    int ret = 0;
+    uint32_t cfg_base = 0x10164;
+    struct dbg_mem_read_cfm cfm;
+    uint32_t misc_ram_addr;
+    uint32_t ram_base_addr, ram_byte_cnt;
+    AICWFDBG(LOGINFO, "bit_mask[1]=%x\n", loft_res->bit_mask[1]);
+    if (loft_res->bit_mask[1] == 0) {
+        AICWFDBG(LOGERROR, "void loft_res, bypass it.\n");
+        return 0;
+    }
+    if (testmode == 1) {
+        cfg_base = RAM_LMAC_FW_ADDR + 0x0164;
+    }
+    if ((ret = rwnx_send_dbg_mem_read_req(rwnx_hw, cfg_base + 0x14, &cfm))) {
+        AICWFDBG(LOGERROR, "rf misc ram[0x%x] rd fail: %d\n", cfg_base + 0x14, ret);
+        return ret;
+    }
+    misc_ram_addr = cfm.memdata;
+    AICWFDBG(LOGINFO, "misc_ram_addr: %x\n", misc_ram_addr);
+    /* Copy loft_res on the Embedded side */
+    // bit_mask
+    AICWFDBG(LOGINFO, "bit_mask[0]=%x\n", loft_res->bit_mask[0]);
+    ram_base_addr = misc_ram_addr + offsetof(rf_misc_ram_t, bit_mask);
+    ram_byte_cnt = MEMBER_SIZE(rf_misc_ram_t, bit_mask) + MEMBER_SIZE(rf_misc_ram_t, reserved);
+    ret = rwnx_send_dbg_mem_block_write_req(rwnx_hw, ram_base_addr, ram_byte_cnt, (u32 *)&loft_res->bit_mask[0]);
+    if (ret) {
+        AICWFDBG(LOGERROR, "bit_mask wr fail: %x, ret:%d\r\n", ram_base_addr, ret);
+        return ret;
+    }
+    // loft_res
+    AICWFDBG(LOGINFO, "loft_res[0]=%x\n", loft_res->loft_res[0]);
+    ram_base_addr = misc_ram_addr + offsetof(rf_misc_ram_t, loft_res);
+    ram_byte_cnt = MEMBER_SIZE(rf_misc_ram_t, loft_res);
+    ret = rwnx_send_dbg_mem_block_write_req(rwnx_hw, ram_base_addr, ram_byte_cnt, (u32 *)&loft_res->loft_res[0]);
+    if (ret) {
+        AICWFDBG(LOGERROR, "loft_res wr fail: %x, ret:%d\r\n", ram_base_addr, ret);
+        return ret;
+    }
+    return ret;
+}
+#endif
+
 int aicwf_fdrv_misc_ram_init_8800dc(struct rwnx_hw *rwnx_hw)
 {
     int ret = 0;
@@ -551,6 +598,14 @@ int aicwf_set_rf_config_8800dc(struct rwnx_hw *rwnx_hw, struct mm_set_rf_calib_c
                 ret = aicwf_fdrv_dpd_result_apply_8800dc(rwnx_hw, &dpd_res);
                 if (ret) {
                     AICWFDBG(LOGINFO, "apply dpd bin fail: %d\n", ret);
+                    return ret;
+                }
+            }
+            #elif defined(CONFIG_LOFT_CALIB)
+            if (loft_res_local.bit_mask[1]) {
+                ret = aicwf_fdrv_loft_result_apply_8800dc(rwnx_hw, &loft_res_local);
+                if (ret) {
+                    AICWFDBG(LOGINFO, "apply loft res fail: %d\n", ret);
                     return ret;
                 }
             }

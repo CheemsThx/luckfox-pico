@@ -52,6 +52,7 @@ u32 syscfg_tbl_masked_8800dc[][3] = {
     {0x700010A0, (0x1 << 11), (0x1 << 11)},
     {0x70001034, ((0x1 << 20) | (0x7 << 26)), ((0x0 << 20) | (0x2 << 26))},
     {0x70001038, (0x1 << 8), (0x1 << 8)},
+    {0x70001084, (0x3 << 13), (0x0 << 13)},
     {0x70001094, (0x3 << 2), (0x0 << 2)},
     {0x700021D0, ((0x1 << 5) | (0x1 << 6)), ((0x1 << 5) | (0x1 << 6))},
     {0x70001000, ((0x1 << 0) | (0x1 << 20) | (0x1 << 22)),
@@ -69,6 +70,7 @@ u32 syscfg_tbl_masked_8800dc[][3] = {
     {0x700010A0, (0x1 << 11), (0x1 << 11)},
     {0x70001034, ((0x1 << 20) | (0x7 << 26)), ((0x0 << 20) | (0x2 << 26))},
     {0x70001038, (0x1 << 8), (0x1 << 8)},
+    {0x70001084, (0x3 << 13), (0x0 << 13)},
     {0x70001094, (0x3 << 2), (0x0 << 2)},
     {0x700021D0, ((0x1 << 5) | (0x1 << 6)), ((0x1 << 5) | (0x1 << 6))},
     {0x70001000, ((0x1 << 0) | (0x1 << 20) | (0x1 << 22)),
@@ -94,6 +96,7 @@ u32 syscfg_tbl_masked_8800dc_h[][3] = {
     {0x700010A0, (0x1 << 11), (0x1 << 11)},
     //{0x70001034, ((0x1 << 20) | (0x7 << 26)), ((0x0 << 20) | (0x2 << 26))},
     {0x70001038, (0x1 << 8), (0x1 << 8)},
+    {0x70001084, (0x3 << 13), (0x0 << 13)},
     {0x70001094, (0x3 << 2), (0x0 << 2)},
     {0x700021D0, ((0x1 << 5) | (0x1 << 6)), ((0x1 << 5) | (0x1 << 6))},
     #if defined(CONFIG_VRF_DCDC_MODE)
@@ -127,6 +130,9 @@ u32 patch_tbl_wifisetting_8800dc_u02[][2] =
     {0x0124,0x01011E01}
 #else
 	{0x0124,0x01001E01}
+#endif
+#ifdef CONFIG_PRBREQ_REPORT
+	{0x0138, 0x00010a00}, //apm probe resp offload en
 #endif
 };
 
@@ -1735,104 +1741,104 @@ const uint32_t txgain_map_femkct[96] =
 const uint32_t txgain_map_femkct_h[96] =
 {
     //11b
-    0x00ffd872,//15
-    0x00ffd880,//16
-    0x00ffd972,//17
-    0x00ffd980,//18
-    0x00ffd990,//19
-    0x00ffda72,//20
-    0x00ffda80,//21
-    0x00ffdb72,//22
-    0x00ffdb80,//23
-    0x00ffdc72,//24
-    0x00ffdc80,//25
-    0x00ffdd72,//26
-    0x00ffdd80,//27
-    0x00ffde72,//28
-    0x00ffde80,//29
-    0x00ffdf72,//30
-    0x00ffd072,//-1
-    0x00ffd072,//0
-    0x00ffd080,//1
-    0x00ffd172,//2
-    0x00ffd180,//3
-    0x00ffd272,//4
-    0x00ffd280,//5
-    0x00ffd379,//6
-    0x00ffd46d,//7
-    0x00ffd479,//8
-    0x00ffd572,//9
-    0x00ffd580,//10
-    0x00ffd672,//11
-    0x00ffd680,//12
-    0x00ffd772,//13
-    0x00ffd780,//14
+    0x00ffd86c,//15
+    0x00ffd879,//16
+    0x00ffd96c,//17
+    0x00ffd979,//18
+    0x00ffd988,//19
+    0x00ffda6c,//20
+    0x00ffda79,//21
+    0x00ffdb6c,//22
+    0x00ffdb79,//23
+    0x00ffdc6c,//24
+    0x00ffdc79,//25
+    0x00ffdd6c,//26
+    0x00ffdd79,//27
+    0x00ffde6c,//28
+    0x00ffde79,//29
+    0x00ffdf6c,//30
+    0x00ffd06c,//-1
+    0x00ffd06c,//0
+    0x00ffd079,//1
+    0x00ffd16c,//2
+    0x00ffd179,//3
+    0x00ffd26c,//4
+    0x00ffd279,//5
+    0x00ffd372,//6
+    0x00ffd467,//7
+    0x00ffd472,//8
+    0x00ffd56c,//9
+    0x00ffd579,//10
+    0x00ffd66c,//11
+    0x00ffd679,//12
+    0x00ffd76c,//13
+    0x00ffd779,//14
     //high
-    0x00ffc880,//11
-    0x00ffc972,//12
-    0x00ffc980,//13
-    0x00ffca72,//14
-    0x00ffca80,//15
-    0x00ffcb72,//16
-    0x00ffcb80,//17
-    0x00ffcc72,//18
-    0x00ffcc80,//19
-    0x00ffcc90,//20
-    0x00ffcd72,//21
-    0x00ffcd80,//22
-    0x00ffce72,//23
-    0x00ffce80,//24
-    0x00ffcf72,//25
-    0x00ffcf80,//26
-    0x00ffc080,//-5
-    0x00ffc172,//-4
-    0x00ffc180,//-3
-    0x00ffc272,//-2
-    0x00ffc280,//-1
-    0x00ffc372,//0
-    0x00ffc380,//1
-    0x00ffc472,//2
-    0x00ffc480,//3
-    0x00ffc572,//4
-    0x00ffc580,//5
-    0x00ffc672,//6
-    0x00ffc680,//7
-    0x00ffc772,//8
-    0x00ffc780,//9
-    0x00ffc872,//10
+    0x00ffc879,//11
+    0x00ffc96c,//12
+    0x00ffc979,//13
+    0x00ffca6c,//14
+    0x00ffca79,//15
+    0x00ffcb6c,//16
+    0x00ffcb79,//17
+    0x00ffcc6c,//18
+    0x00ffcc79,//19
+    0x00ffcc88,//20
+    0x00ffcd6c,//21
+    0x00ffcd79,//22
+    0x00ffce6c,//23
+    0x00ffce79,//24
+    0x00ffcf6c,//25
+    0x00ffcf79,//26
+    0x00ffc079,//-5
+    0x00ffc16c,//-4
+    0x00ffc179,//-3
+    0x00ffc26c,//-2
+    0x00ffc279,//-1
+    0x00ffc36c,//0
+    0x00ffc379,//1
+    0x00ffc46c,//2
+    0x00ffc479,//3
+    0x00ffc56c,//4
+    0x00ffc579,//5
+    0x00ffc66c,//6
+    0x00ffc679,//7
+    0x00ffc76c,//8
+    0x00ffc779,//9
+    0x00ffc86c,//10
     //low
-    0x00ffc880,//11
-    0x00ffc972,//12
-    0x00ffc980,//13
-    0x00ffca72,//14
-    0x00ffca80,//15
-    0x00ffcb72,//16
-    0x00ffcb80,//17
-    0x00ffcc72,//18
-    0x00ffcc80,//19
-    0x00ffcc90,//20
-    0x00ffcd72,//21
-    0x00ffcd80,//22
-    0x00ffce72,//23
-    0x00ffce80,//24
-    0x00ffcf72,//25
-    0x00ffcf80,//26
-    0x00ffc080,//-5
-    0x00ffc172,//-4
-    0x00ffc180,//-3
-    0x00ffc272,//-2
-    0x00ffc280,//-1
-    0x00ffc372,//0
-    0x00ffc380,//1
-    0x00ffc472,//2
-    0x00ffc480,//3
-    0x00ffc572,//4
-    0x00ffc580,//5
-    0x00ffc672,//6
-    0x00ffc680,//7
-    0x00ffc772,//8
-    0x00ffc780,//9
-    0x00ffc872,//10
+    0x00ffc879,//11
+    0x00ffc96c,//12
+    0x00ffc979,//13
+    0x00ffca6c,//14
+    0x00ffca79,//15
+    0x00ffcb6c,//16
+    0x00ffcb79,//17
+    0x00ffcc6c,//18
+    0x00ffcc79,//19
+    0x00ffcc88,//20
+    0x00ffcd6c,//21
+    0x00ffcd79,//22
+    0x00ffce6c,//23
+    0x00ffce79,//24
+    0x00ffcf6c,//25
+    0x00ffcf79,//26
+    0x00ffc079,//-5
+    0x00ffc16c,//-4
+    0x00ffc179,//-3
+    0x00ffc26c,//-2
+    0x00ffc279,//-1
+    0x00ffc36c,//0
+    0x00ffc379,//1
+    0x00ffc46c,//2
+    0x00ffc479,//3
+    0x00ffc56c,//4
+    0x00ffc579,//5
+    0x00ffc66c,//6
+    0x00ffc679,//7
+    0x00ffc76c,//8
+    0x00ffc779,//9
+    0x00ffc86c,//10
 };
 #endif
 
@@ -2519,10 +2525,23 @@ int aicwf_dpd_result_write_8800dc(void *buf, int buf_len)
 #endif
 
 #ifdef CONFIG_LOFT_CALIB
-int aicwf_loft_calib_8800dc(struct aic_sdio_dev *sdiodev)
+int aicwf_loft_calib_8800dc(struct aic_sdio_dev *sdiodev, rf_misc_ram_lite_t *loft_res)
 {
     int ret = 0;
     uint32_t fw_addr, boot_type;
+    int valid_flag;
+
+    printk("%s\n", __func__);
+
+    ret = aicwf_misc_ram_valid_check_8800dc(sdiodev, &valid_flag);
+    if (ret) {
+        AICWFDBG(LOGINFO, "misc ram check fail: %d\n", ret);
+        return ret;
+    }
+    if (valid_flag) {
+        AICWFDBG(LOGINFO, "misc ram valid, skip calib process\n");
+        return ret;
+    }
     ret = aicwf_plat_calib_load_8800dc(sdiodev);
     if (ret) {
         AICWFDBG(LOGINFO, "load calib bin fail: %d\n", ret);
@@ -2535,6 +2554,84 @@ int aicwf_loft_calib_8800dc(struct aic_sdio_dev *sdiodev)
     ret = rwnx_send_dbg_start_app_req(sdiodev, fw_addr, boot_type, NULL);
     if (ret) {
         AICWFDBG(LOGINFO, "start app fail: %d\n", ret);
+        return ret;
+    }
+    { // read loft res
+        const uint32_t cfg_base = 0x10164;
+        struct dbg_mem_read_cfm cfm;
+        uint32_t misc_ram_addr;
+        uint32_t ram_base_addr, ram_word_cnt;
+        int i;
+        ret = rwnx_send_dbg_mem_read_req(sdiodev, cfg_base + 0x14, &cfm);
+        if (ret) {
+            AICWFDBG(LOGERROR, "rf misc ram[0x%x] rd fail: %d\n", cfg_base + 0x14, ret);
+            return ret;
+        }
+        misc_ram_addr = cfm.memdata;
+        // bit_mask
+        ram_base_addr = misc_ram_addr + offsetof(rf_misc_ram_t, bit_mask);
+        ram_word_cnt = (MEMBER_SIZE(rf_misc_ram_t, bit_mask) + MEMBER_SIZE(rf_misc_ram_t, reserved)) / 4;
+        for (i = 0; i < ram_word_cnt; i++) {
+            ret = rwnx_send_dbg_mem_read_req(sdiodev, ram_base_addr + i * 4, &cfm);
+            if (ret) {
+                AICWFDBG(LOGERROR, "bit_mask[0x%x] rd fail: %d\n",  ram_base_addr + i * 4, ret);
+                return ret;
+            }
+            loft_res->bit_mask[i] = cfm.memdata;
+        }
+        // loft_res
+        ram_base_addr = misc_ram_addr + offsetof(rf_misc_ram_t, loft_res);
+        ram_word_cnt = MEMBER_SIZE(rf_misc_ram_t, loft_res) / 4;
+        for (i = 0; i < ram_word_cnt; i++) {
+            ret = rwnx_send_dbg_mem_read_req(sdiodev, ram_base_addr + i * 4, &cfm);
+            if (ret) {
+                AICWFDBG(LOGERROR, "loft_res[0x%x] rd fail: %d\n",  ram_base_addr + i * 4, ret);
+                return ret;
+            }
+            loft_res->loft_res[i] = cfm.memdata;
+        }
+    }
+    return ret;
+}
+
+int aicwf_loft_result_apply_8800dc(struct aic_sdio_dev *sdiodev, rf_misc_ram_lite_t *loft_res)
+{
+    int ret = 0;
+    uint32_t cfg_base = 0x10164;
+    struct dbg_mem_read_cfm cfm;
+    uint32_t misc_ram_addr;
+    uint32_t ram_base_addr, ram_byte_cnt;
+    AICWFDBG(LOGINFO, "bit_mask[1]=%x\n", loft_res->bit_mask[1]);
+    if (loft_res->bit_mask[1] == 0) {
+        AICWFDBG(LOGERROR, "void loft_res, bypass it.\n");
+        return 0;
+    }
+    if (testmode == FW_RFTEST_MODE) {
+        cfg_base = RAM_LMAC_FW_ADDR + 0x0164;
+    }
+    if ((ret = rwnx_send_dbg_mem_read_req(sdiodev, cfg_base + 0x14, &cfm))) {
+        AICWFDBG(LOGERROR, "rf misc ram[0x%x] rd fail: %d\n", cfg_base + 0x14, ret);
+        return ret;
+    }
+    misc_ram_addr = cfm.memdata;
+    AICWFDBG(LOGINFO, "misc_ram_addr: %x\n", misc_ram_addr);
+    /* Copy loft_res on the Embedded side */
+    // bit_mask
+    AICWFDBG(LOGINFO, "bit_mask[0]=%x\n", loft_res->bit_mask[0]);
+    ram_base_addr = misc_ram_addr + offsetof(rf_misc_ram_t, bit_mask);
+    ram_byte_cnt = MEMBER_SIZE(rf_misc_ram_t, bit_mask) + MEMBER_SIZE(rf_misc_ram_t, reserved);
+    ret = rwnx_send_dbg_mem_block_write_req(sdiodev, ram_base_addr, ram_byte_cnt, (u32 *)&loft_res->bit_mask[0]);
+    if (ret) {
+        AICWFDBG(LOGERROR, "bit_mask wr fail: %x, ret:%d\r\n", ram_base_addr, ret);
+        return ret;
+    }
+    // loft_res
+    AICWFDBG(LOGINFO, "loft_res[0]=%x\n", loft_res->loft_res[0]);
+    ram_base_addr = misc_ram_addr + offsetof(rf_misc_ram_t, loft_res);
+    ram_byte_cnt = MEMBER_SIZE(rf_misc_ram_t, loft_res);
+    ret = rwnx_send_dbg_mem_block_write_req(sdiodev, ram_base_addr, ram_byte_cnt, (u32 *)&loft_res->loft_res[0]);
+    if (ret) {
+        AICWFDBG(LOGERROR, "loft_res wr fail: %x, ret:%d\r\n", ram_base_addr, ret);
         return ret;
     }
     return ret;

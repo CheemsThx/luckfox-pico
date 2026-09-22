@@ -14,6 +14,12 @@ CONFIG_PLATFORM_ALLWINNER = n
 CONFIG_PLATFORM_AMLOGIC = n
 CONFIG_PLATFORM_UBUNTU = n
 
+export CONFIG_PLATFORM_ROCKCHIP
+export CONFIG_PLATFORM_ROCKCHIP2
+export CONFIG_PLATFORM_ALLWINNER
+export CONFIG_PLATFORM_AMLOGIC
+export CONFIG_PLATFORM_UBUNTU
+
 MAKEFLAGS +=-j$(shell nproc)
 
 ifeq ($(CONFIG_PLATFORM_ROCKCHIP), y)
@@ -64,6 +70,8 @@ modules:
 	cp $(shell pwd)/aic8800_btlpm/aic8800_btlpm.ko $(M_OUT_DIR)
 	cp $(shell pwd)/aic8800_bsp/aic8800_bsp.ko $(M_OUT_DIR)
 	cp -r $(shell pwd)/aic8800dc_fw $(M_OUT_DIR)
+	# DC 与 D80/D80L 固件文件名不冲突，打进同一 CONFIG_AIC_FW_PATH
+	cp -f $(shell pwd)/aic8800d80_fw/* $(M_OUT_DIR)/aic8800dc_fw/
 
 
 install:
@@ -83,5 +91,5 @@ clean:
 	cd aic8800_bsp/;make clean;cd ..
 	cd aic8800_fdrv/;make clean;cd ..
 	cd aic8800_btlpm/;make clean;cd ..
-	rm -rf modules.order Module.symvers .tmp_versions/
+	rm -rf modules.order Module.symvers .modules.order.cmd .Module.symvers.cmd .tmp_versions/
 

@@ -245,18 +245,6 @@
 				remote-endpoint = <&sc3336_out>;
 				data-lanes = <1 2>;
 			};
-
-			csi_dphy_input1: endpoint@1 {
-				reg = <1>;
-				remote-endpoint = <&sc4336_out>;
-				data-lanes = <1 2>;
-			};
-
-			csi_dphy_input2: endpoint@2 {
-				reg = <2>;
-				remote-endpoint = <&sc530ai_out>;
-				data-lanes = <1 2>;
-			};
 		};
 
 		port@1 {
@@ -294,48 +282,6 @@
 		port {
 			sc3336_out: endpoint {
 				remote-endpoint = <&csi_dphy_input0>;
-				data-lanes = <1 2>;
-			};
-		};
-	};
-
-	sc4336: sc4336@30 {
-		compatible = "smartsens,sc4336";
-		status = "okay";
-		reg = <0x30>;
-		clocks = <&cru MCLK_REF_MIPI0>;
-		clock-names = "xvclk";
-		pwdn-gpios = <&gpio3 RK_PC5 GPIO_ACTIVE_HIGH>;
-		pinctrl-names = "default";
-		pinctrl-0 = <&mipi_refclk_out0>;
-		rockchip,camera-module-index = <0>;
-		rockchip,camera-module-facing = "back";
-		rockchip,camera-module-name = "OT01";
-		rockchip,camera-module-lens-name = "40IRC_F16";
-		port {
-			sc4336_out: endpoint {
-				remote-endpoint = <&csi_dphy_input1>;
-				data-lanes = <1 2>;
-			};
-		};
-	};
-
-	sc530ai: sc530ai@30 {
-		compatible = "smartsens,sc530ai";
-		status = "okay";
-		reg = <0x30>;
-		clocks = <&cru MCLK_REF_MIPI0>;
-		clock-names = "xvclk";
-		pwdn-gpios = <&gpio3 RK_PC5 GPIO_ACTIVE_HIGH>;
-		pinctrl-names = "default";
-		pinctrl-0 = <&mipi_refclk_out0>;
-		rockchip,camera-module-index = <0>;
-		rockchip,camera-module-facing = "back";
-		rockchip,camera-module-name = "CMK-OT2115-PC1";
-		rockchip,camera-module-lens-name = "30IRC-F16";
-		port {
-			sc530ai_out: endpoint {
-				remote-endpoint = <&csi_dphy_input2>;
 				data-lanes = <1 2>;
 			};
 		};
@@ -506,7 +452,8 @@
 	pinctrl-0 = <&i2c3m0_xfer &i2c3m1_xfer &i2c3m2_xfer &tp_rst &tp_irq>;
 };
 &i2c4 {
-	pinctrl-0 = <&i2c4m0_xfer &i2c4m1_xfer &i2c4m2_xfer>;
+	/* 仅 i2c4m2（GPIO3），勿含 m0（GPIO2 与 SD 卡 sdmmc1m0 冲突） */
+	pinctrl-0 = <&i2c4m2_xfer>;
 };
 
 // UART

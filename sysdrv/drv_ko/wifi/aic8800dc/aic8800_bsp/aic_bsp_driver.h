@@ -16,7 +16,7 @@
 #include <linux/module.h>
 #include "aic_bsp_export.h"
 
-#define RWNX_80211_CMD_TIMEOUT_MS    3000//500//300
+#define RWNX_80211_CMD_TIMEOUT_MS    6000//500//300
 
 #define RWNX_CMD_FLAG_NONBLOCK      BIT(0)
 #define RWNX_CMD_FLAG_REQ_CFM       BIT(1)
@@ -46,7 +46,6 @@ extern int aicwf_dbg_level_bsp;
 
 #define AICWF_LOG		"AICWFDBG("
 
-#ifdef DEBUG
 #define AICWFDBG(level, args, arg...)	\
 do {	\
 	if (aicwf_dbg_level_bsp & level) {	\
@@ -61,12 +60,6 @@ do {	\
 	}	\
 } while (0)
 
-#else 
-
-#define AICWFDBG(level, args, arg...)
-#define RWNX_DBG(fmt, ...)
-
-#endif
 /// Message structure for MSGs from Emb to App
 struct ipc_e2a_msg {
 	u16 id;                ///< Message id.
@@ -317,10 +310,8 @@ struct dbg_start_app_cfm {
 
 int aicwf_plat_patch_load_8800dc(struct aic_sdio_dev *sdiodev);
 int aicwf_plat_rftest_load_8800dc(struct aic_sdio_dev *sdiodev);
-#ifdef CONFIG_DPD
-int aicwf_misc_ram_valid_check_8800dc(struct aic_sdio_dev *sdiodev, int *valid_out);
-#endif
 #if defined(CONFIG_DPD) || defined(CONFIG_LOFT_CALIB)
+int aicwf_misc_ram_valid_check_8800dc(struct aic_sdio_dev *sdiodev, int *valid_out);
 int aicwf_plat_calib_load_8800dc(struct aic_sdio_dev *sdiodev);
 #endif
 
@@ -352,6 +343,8 @@ int aicbsp_resv_mem_deinit(void);
 #define AICBSP_FW_PATH_MAX          200
 
 #define RAM_FMAC_FW_ADDR                    0x00120000
+#define RAM_FMAC_FW_ADDR_D80X2              0x00128000
+#define RAM_FMAC_FW_PATCH_ADDR              0x00190000
 #define FW_RAM_ADID_BASE_ADDR               0x00161928
 #define FW_RAM_ADID_BASE_ADDR_U03           0x00161928
 #define FW_RAM_PATCH_BASE_ADDR              0x00100000
@@ -378,7 +371,8 @@ int aicbsp_resv_mem_deinit(void);
 #define ROM_FMAC_FW_ADDR               0x00010000
 #define ROM_FMAC_PATCH_ADDR            0x00180000
 
-#define RWNX_MAC_CALIB_BASE_NAME_8800DC        "fmacfw_calib_8800dc"
+#define RAM_FMAC_FW_PATCH_NAME      			"fmacfw_patch.bin"
+#define RWNX_MAC_CALIB_BASE_NAME_8800DC         "fmacfw_calib_8800dc"
 #define RWNX_MAC_CALIB_NAME_8800DC_U02          RWNX_MAC_CALIB_BASE_NAME_8800DC"_u02.bin"
 #ifdef CONFIG_SDIO_BT
 #define RWNX_MAC_CALIB_NAME_8800DC_H_U02        RWNX_MAC_CALIB_BASE_NAME_8800DC"_hbt_u02.bin"
@@ -508,12 +502,17 @@ enum chip_rev {
 #define AICBT_TXPWR_LVL            0x00006020
 #define AICBT_TXPWR_LVL_8800dc            0x00006f2f
 #define AICBT_TXPWR_LVL_8800d80           0x00006f2f
+#define AICBT_TXPWR_LVL_8800d80n           0x00006f2f
+#define AICBT_TXPWR_LVL_8800d80x2           0x00006f2f
+
 
 #define AICBSP_HWINFO_DEFAULT       (-1)
 #define AICBSP_CPMODE_DEFAULT       AICBSP_CPMODE_WORK
 #define AICBSP_FWLOG_EN_DEFAULT     0
 
+#define AICBT_BTMODE_DEFAULT_8800d80x2    AICBT_BTMODE_BT_ONLY_COANT
 #define AICBT_BTMODE_DEFAULT_8800d80    AICBT_BTMODE_BT_ONLY_COANT
+#define AICBT_BTMODE_DEFAULT_8800d80n    AICBT_BTMODE_BT_ONLY_COANT
 #define AICBT_BTMODE_DEFAULT            AICBT_BTMODE_BT_ONLY_SW
 #ifdef CONFIG_SDIO_BT
 #define AICBT_BTPORT_DEFAULT            AICBT_BTPORT_MB
@@ -526,6 +525,8 @@ enum chip_rev {
 #define AICBT_TXPWR_LVL_DEFAULT         AICBT_TXPWR_LVL
 #define AICBT_TXPWR_LVL_DEFAULT_8800dc  AICBT_TXPWR_LVL_8800dc
 #define AICBT_TXPWR_LVL_DEFAULT_8800d80 AICBT_TXPWR_LVL_8800d80
+#define AICBT_TXPWR_LVL_DEFAULT_8800d80n AICBT_TXPWR_LVL_8800d80n
+#define AICBT_TXPWR_LVL_DEFAULT_8800d80x2 AICBT_TXPWR_LVL_8800d80x2
 
 
 #define FEATURE_SDIO_CLOCK          50000000 // 0: default, other: target clock rate
@@ -550,15 +551,21 @@ struct aicbt_info_t {
 };
 
 struct aicbt_patch_info_t {
-       uint32_t info_len;
-       uint32_t adid_addrinf;
-	uint32_t addr_adid;
-       uint32_t patch_addrinf;
-	uint32_t addr_patch;
-	uint32_t reset_addr;
-	uint32_t reset_val;
-	uint32_t adid_flag_addr;
-	uint32_t adid_flag;
+    uint32_t info_len;
+//base len start
+    uint32_t adid_addrinf;
+    uint32_t addr_adid;
+    uint32_t patch_addrinf;
+    uint32_t addr_patch;
+    uint32_t reset_addr;
+    uint32_t reset_val;
+    uint32_t adid_flag_addr;
+    uint32_t adid_flag;
+//base len end
+//ext patch nb
+    uint32_t ext_patch_nb_addr;
+    uint32_t ext_patch_nb;
+    uint32_t *ext_patch_param;
 };
 
 struct aicbsp_firmware {
@@ -567,6 +574,7 @@ struct aicbsp_firmware {
 	const char *bt_patch;
 	const char *bt_table;
 	const char *wl_fw;
+    const char *bt_ext_patch;
 };
 
 struct aicbsp_info_t {
@@ -589,5 +597,8 @@ extern const struct aicbsp_firmware fw_8800dc_h_u02[];
 extern const struct aicbsp_firmware fw_8800d80_u01[];
 extern const struct aicbsp_firmware fw_8800d80_u02[];
 extern const struct aicbsp_firmware fw_8800d80_h_u02[];
+extern const struct aicbsp_firmware fw_8800d80n_u02[];
+extern const struct aicbsp_firmware fw_8800d80n_u02c[];
+extern const struct aicbsp_firmware fw_8800d80x2[];
 
 #endif

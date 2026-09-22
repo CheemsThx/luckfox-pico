@@ -103,6 +103,20 @@ struct aicwf_bus {
         struct task_struct *busirq_thread;//new oob feature
 };
 
+#ifdef CONFIG_SDIO_ADMA
+#define SDIO_HEADER_LEN	4
+#define SDIO_DATA_FAKE_LEN	2
+#define SDIO_MGMT_FAKE_LEN	4
+#define ALIGN4_ADJ_LEN(x)   ((4-(x&3))&3)
+
+#define SDIO_TX_SLIST_MAX   136
+
+/*struct tx_scatterlist {
+	const void *buf;
+	unsigned int len;
+};*/
+#endif
+
 struct aicwf_tx_priv {
 #ifdef AICWF_SDIO_SUPPORT
 	struct aic_sdio_dev *sdiodev;
@@ -128,6 +142,14 @@ struct aicwf_tx_priv {
 	atomic_t aggr_count;
 	u8 *head;
 	u8 *tail;
+
+#ifdef CONFIG_SDIO_ADMA
+	struct tx_scatterlist sg_list[SDIO_TX_SLIST_MAX];
+	void *free_buf[SDIO_TX_SLIST_MAX];
+	bool copyd[SDIO_TX_SLIST_MAX];
+	u32 aggr_segcnt;
+	u32 len;
+#endif
 };
 
 
@@ -157,18 +179,25 @@ struct reord_ctrl_info {
 };
 
 struct recv_msdu {
-	 struct sk_buff  *pkt;
-	 u8  tid;
-	 u16 seq_num;
-	 u8 forward;
-	 //uint len;
-	 u32 is_amsdu;
-	 u8 *rx_data;
-	 //for pending rx reorder list
-	struct list_head reord_pending_list;
-	//for total frame list, when rxframe from busif, dequeue, when submit frame to net, enqueue
-	struct list_head rxframe_list;
-	struct reord_ctrl *preorder_ctrl;
+     struct sk_buff  *pkt;
+     u8  tid;
+     u16 seq_num;
+     u8 forward;
+     //uint len;
+     u8 is_amsdu;
+     u8 is_ap_reord;
+     u8 ap_fwd_cnt;
+     u8 ap_resend_cnt;
+     u8 *rx_data;
+     struct sk_buff *first_fwd_skb;
+     struct sk_buff *last_fwd_skb;
+     struct sk_buff *first_resend_skb;
+     struct sk_buff *last_resend_skb;
+     //for pending rx reorder list
+    struct list_head reord_pending_list;
+    //for total frame list, when rxframe from busif, dequeue, when submit frame to net, enqueue
+    struct list_head rxframe_list;
+    struct reord_ctrl *preorder_ctrl;
 };
 #endif
 
