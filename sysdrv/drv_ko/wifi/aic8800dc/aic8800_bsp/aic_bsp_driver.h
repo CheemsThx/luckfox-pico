@@ -529,6 +529,28 @@ enum chip_rev {
 #define AICBT_TXPWR_LVL_DEFAULT_8800d80x2 AICBT_TXPWR_LVL_8800d80x2
 
 
+/* [2026-09-23 DW-TLY-V020] SDIO 时钟为什么保持 50M 不动，以及要提速该怎么做。
+ *
+ * 模组是 AIC8800DC（本目录），厂商标称 SDIO 2.0、默认 50MHz；同一份代码给
+ * AIC8800D80 系列的是 FEATURE_SDIO_CLOCK_V3 = 150MHz，说明"更高的 SDIO 时钟"
+ * 这条路厂商本来就走过。本值由 bsp 的 aicbsp_get_feature() 导出，fdrv 在
+ * aicwf_sdio.c:3176 直接 host->ops->set_ios() 生效（绕过 core 的 f_max 限制，
+ * 所以 DTS 的 max-frequency 不挡它；dw_mci_set_ios 也没有 f_max 夹取，只有
+ * f_min=100kHz 下限）。
+ *
+ * 2026-09-23 实测（板子做 iperf3 server，WSL 做 client，同一个 AP，4-bit/49.5MHz）：
+ *   2.4G dongxiTech（ch6/20MHz）      TCP 收 93 / 发 56，UDP 收 101(丢65%) / 发 62
+ *   5G   dongxiTech-5G（80MHz HE-MCS11，PHY 600Mbps）
+ *                                     TCP 收 108 / 发 130，UDP 收 109(丢62%) / 发 115
+ *                                     TCP -P4 聚合 121/123
+ * 5G 上单流和 4 流聚合都停在 ~120-130Mbps，同期抓 /proc/stat 内核态只占 42%
+ * （idle 58%），所以共享瓶颈不在 CPU。剩下两个候选：4-bit/49.5MHz 的 SDIO 总线
+ * （裸带宽 198Mbps）或是模组自身吞吐上限。**"SDIO 已打满"目前只是候选、不是结论**
+ * —— 把这两个分开的唯一实验就是改这个宏做 A/B，到 2026-09-23 为止没做。
+ * 要做的话：改成 100000000 重编 aic8800_bsp.ko，运行期 rmmod/insmod aic8800_fdrv+
+ * btlpm+bsp 做 A/B（重启即恢复），别替换 /oem 里随固件启动的那份。
+ * 另：相位 90° 是按 50MHz 定的，100MHz 下窗口更窄，稳定性要一并看。
+ * 回退：宏改回 50000000 重编。 */
 #define FEATURE_SDIO_CLOCK          50000000 // 0: default, other: target clock rate
 #define FEATURE_SDIO_CLOCK_V3       150000000 // 0: default, other: target clock rate
 #define FEATURE_SDIO_PHASE          2        // 0: default, 2: 180°
