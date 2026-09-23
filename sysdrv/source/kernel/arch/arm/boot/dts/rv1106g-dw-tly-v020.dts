@@ -1,0 +1,767 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+/*
+ * DW-TLY-V020 自研板 — RV1106 + SPI NAND + AIC8800
+ *
+ * 并列新增的板级，与 V014 的 rv1106g-luckfox-pico-ultra-spi-nand.dts 互不影响。
+ * 切板靠 BoardConfig 的 RK_KERNEL_DTS，不改动任何既有文件。
+ *
+ * 与 V014 的关键差异（勿照抄 V014）：
+ *   V014: WiFi 走 sdmmc0(GPIO3_A1-A7) / TF 卡走 sdmmc1m0(GPIO2_A0-A5)
+ *   V020: SD  走 sdmmc0(GPIO3_A1-A7，贴装 U32 TF 卡座，卡常插/按不可移除) / WiFi 走 sdmmc1m0(GPIO2_A0-A5)
+ *   V014: 蓝牙走 uart1m0 / V020: 蓝牙走 uart0m1 四线(GPIO2，含硬件流控)
+ *   V020 新增: I2C0 充电/电量计、激光 PWM3、补光 PWM4、SARADC 两路、独立 LED 通道
+ *
+ * ball→pad 映射来自 doc/Netlist_DW-TLY-V020_2026-09-22.enet，已与 rv1106-pinctrl.dtsi
+ * 逐条交叉核验（详见 doc 内说明与本次适配记录）。注意：本 SoC 只有 GPIO0..GPIO4，
+ * 网表说明里出现的 GPIO5/6/7 是数据手册给供电 pin 的分组名，不是 GPIO 控制器号，
+ * 故本文件不出现 &gpio5/&gpio6/&gpio7。
+ *
+ * !! model 字符串必须含大写 "W" !!
+ * sysdrv/drv_ko/wifi/insmod_wifi.sh:71 用 `cat /proc/device-tree/model | grep "W"`
+ * 决定是否 insmod AIC8800（bsp/fdrv/btlpm）。改掉这个字母会导致 WiFi 不再自动加载。
+ */
+
+/dts-v1/;
+#include "rv1106.dtsi"
+#include "rv1106-luckfox-pico-ultra-ipc.dtsi"
+#include <dt-bindings/input/input.h>
+#include <dt-bindings/display/media-bus-format.h>
+
+/ {
+	model = "DW-TLY-V020 W";
+
+	/* 沿用 V014 的根 compatible 串。已核实本内核无任何代码匹配它：
+	 * arch/arm/mach-rockchip/rockchip.c:58 的 dt_compat 表不含 rv1106，
+	 * 且全树 of_machine_is_compatible 无 "rockchip,rv1106g3" 引用。
+	 * 保持一致可避免引入未预料的匹配差异，且与已跑通的 V014 完全同构。 */
+	compatible = "rockchip,rv1103g-38x38-ipc-v10", "rockchip,rv1106g3";
+
+	/* 共享 dtsi 的 work_led 占 GPIO3_C6，本板该 pad 未连接（网表 ball 4 为空）
+	 * → 见文末 &work_led，关掉免得出现幽灵 LED。 */
+
+	/**********串口别名重映射 —— 让蓝牙 HCI 落在 /dev/ttyS1**********
+	 * 本板 BLE HCI 走 uart0(uart0m1 四线)，而整个 Luckfox 用户态把蓝牙 HCI
+	 * 写死在 /dev/ttyS1，共两处、都是跨板共享文件：
+	 *   project/cfg/BoardConfig_IPC/overlay/overlay-luckfox-buildroot-init/etc/init.d/S35wifibt:56
+	 *   sysdrv/tools/board/buildroot/S99hciinit:6   （由 sysdrv/Makefile:612 安装进 rootfs）
+	 * 改那两处会波及 V014 及其它所有 Luckfox 板，所以改为在这里给 uart0 分配别名 1。
+	 *
+	 * 必须连 serial0 一起显式改写：rv1106.dtsi:54 已把 serial0 指给 &uart0，
+	 * 若只加 serial1 = &uart0，同一个节点会有两个别名，而 of_alias_get_id() 取的是
+	 * 列表里第一个匹配 → 仍会得到 id 0，重映射失效。
+	 * uart1 在本板是 disabled，serial0 指过去不会生成 /dev/ttyS0，
+	 * 于是 /dev/ttyS1 成为 8250 唯一的端口。
+	 *
+	 * !! 上板排查蓝牙时注意：本板 /dev/ttyS1 == uart0，不是 uart1 !!
+	 * 调试控制台是 ttyFIQ0（fiq_debugger/uart2 实例），与 ttyS* 编号无关，不受影响。
+	 * 本树内没有别的东西消费 serial0/serial1（无 getty 跑在 ttyS* 上）。 */
+	aliases {
+		serial0 = &uart1;
+		serial1 = &uart0;
+	};
+
+	/* WL_EN 已由 ball 117 (GPIO3_B0) 改接到 PWR_CTRL_M1 = GPIO0_A3 (ball 62)。
+	 *
+	 * 为什么换脚：原 GPIO3_B0 的软件侧全部核对正确（实测 IOMUX = 功能 0 = GPIO、
+	 * DDR 输出使能、DR 随写入翻转），但 pad 回读恒为低、且万用表侧电平不随驱动
+	 * 变化 —— SoC 的驱动到不了那一脚，模组因此永远拿不到复位。换到本脚绕开它。
+	 *
+	 * 极性仍是 ACTIVE_LOW = 复位低有效，与参考板 main_axiarz 同约定；稳态物理高
+	 * = 复位释放/使能。
+	 *
+	 * 本脚空载电平：R22(10k) 下拉到 GND —— 驱动接管之前 WL_EN 保持低（模组被按住
+	 * 复位），比旧网络 R28 上拉到 VCC_1V8 更符合复位线应有的行为，所以 pinctrl 里
+	 * 配 bias-pull-down 与之一致，且显式声明 RK_FUNC_GPIO 而不依赖复位默认值。
+	 *
+	 * 副作用（务必知悉）：GPIO0_A3 同时经 R21(10k) 驱动 Q1 的栅极（原 LED_CTRL0
+	 * 通道）。即 WL_EN 拉高时 Q1 会一起导通。本树不声明 LED_CTRL* 的任何用途，
+	 * 若该通道上接了光源，请确认它可以随 WL_EN 一起动作。
+	 *
+	 * 不再使用 pre-power-on-delay-ms：100ms 低电平保持随旧脚一并撤除（驱动侧那次
+	 * 回移也已还原），复位脉冲回到上游默认的 ~25ms —— 对复位线来说足够。 */
+	sdio_pwrseq: sdio-pwrseq {
+		compatible = "mmc-pwrseq-simple";
+		pinctrl-names = "default";
+		pinctrl-0 = <&wl_en_pin>;
+		reset-gpios = <&gpio0 RK_PA3 GPIO_ACTIVE_LOW>;
+		post-power-on-delay-ms = <500>;
+	};
+
+	/* WL_HOST_WAKE = ball 118 = GPIO3_B1 */
+	wireless_wlan: wireless-wlan {
+		compatible = "wlan-platdata";
+		WIFI,host_wake_irq = <&gpio3 RK_PB1 GPIO_ACTIVE_HIGH>;
+		status = "okay";
+	};
+
+	/* BT_WAKE_HOST = ball 119 = GPIO3_B2 → BT,wake_gpio
+	 * HOST_WAKE_BT = ball 120 = GPIO3_B3 → BT,wake_host_irq
+	 *
+	 * 方向不是猜的，由驱动语义 + 已在跑的 V014 两侧印证：
+	 *   rfkill-bt.c:200,209,211 把 wake_gpio 作**输出**（gpio_direction_output）
+	 *     → 它是「主机去唤醒模组」的那根，即 BT_WAKE_HOST；
+	 *   rfkill-bt.c:168 拿 wake_host_irq 去 request_irq，:410/:441 enable|disable_irq
+	 *     → 它是「模组来中断主机」的那根，即 HOST_WAKE_BT。
+	 *   V014 的 rv1106g-luckfox-pico-ultra-spi-nand.dts:45,47 正是这个映射
+	 *   （BT_WAKE_HOST→wake_gpio，HOST_WAKE_BT→wake_host_irq），不要把两者对调。
+	 *
+	 * **不配 uart_rts_gpios**：V020 的 RTS 是 uart0m1 的硬件流控脚(GPIO2_A6)，
+	 * 不是 GPIO 模拟，不能照抄 V014 的 uart1_gpios/pinctrl-1 写法。
+	 * 驱动对缺该属性是良性降级（rfkill-bt.c:541 打印 "uart_rts_gpios is no-in-use." 后继续）。
+	 * TODO(极性): 两个 wake 的 ACTIVE_HIGH 未实测。 */
+	wireless_bluetooth: wireless-bluetooth {
+		compatible = "bluetooth-platdata";
+		BT,wake_gpio     = <&gpio3 RK_PB2 GPIO_ACTIVE_HIGH>;
+		BT,wake_host_irq = <&gpio3 RK_PB3 GPIO_ACTIVE_HIGH>;
+		status = "okay";
+	};
+
+	/* SYS_LED = ball 78 = GPIO1_B1 */
+	leds: leds {
+		compatible = "gpio-leds";
+
+		sys_led: sys-led {
+			label = "sys_led";
+			/* TODO(极性): 未实测 */
+			gpios = <&gpio1 RK_PB1 GPIO_ACTIVE_HIGH>;
+			linux,default-trigger = "activity";
+			default-state = "on";
+		};
+	};
+
+	/* LED_BTN = ball 72 = GPIO1_A0；BTN_nQON = ball 95 = GPIO1_C0。
+	 * TODO: 极性、分压/RC 参数与按键语义均未实测，故 code 先取无副作用的 KEY_PROG1/2 ——
+	 * 即便极性相反也只会多出按键事件，不会触发关机。确认后再改成真正的 keycode。
+	 * （未用 KEY_POWER 是刻意的：BTN_nQON 与 BQ25601 的 QON 网络相关，
+	 *   在驱动侧无 IRQ 的情况下误上报 KEY_POWER 可能被用户态当成关机请求。） */
+	gpio_keys: gpio-keys {
+		compatible = "gpio-keys";
+		pinctrl-names = "default";
+		pinctrl-0 = <&led_btn_pin &btn_nqon_pin>;
+
+		led-btn {
+			label = "LED_BTN";
+			gpios = <&gpio1 RK_PA0 GPIO_ACTIVE_LOW>;
+			linux,code = <KEY_PROG1>;
+		};
+
+		btn-nqon {
+			label = "BTN_nQON";
+			gpios = <&gpio1 RK_PC0 GPIO_ACTIVE_LOW>;
+			linux,code = <KEY_PROG2>;
+		};
+	};
+
+	/**********单节锂电参数：U3 BQ25601 的 monitored-battery**********
+	 * 被下面 i2c0 的 charger@6b 用 monitored-battery 引用，决定实际写入
+	 * 充电芯片寄存器的 ICHG / VBATREG / IPRECHG / ITERM。
+	 *
+	 * 四个属性必须**全部**写。5.10 的 power_supply_get_battery_info()
+	 * (power_supply_core.c) 会先把每个字段预置成 -EINVAL，只填充 DT 里出现的
+	 * 属性，然后**照常返回 0**。少写一个，驱动就会走"成功"分支拿到 -EINVAL，
+	 * 再经 clamp(ichg, 0, -EINVAL) / clamp(vbat, ..., -EINVAL) 算出垃圾值静默
+	 * 写进寄存器 —— 比完全不给 monitored-battery 更危险。
+	 *
+	 * 电池规格尚未确认，故一律取保守档位，且绝不沿用驱动里的兜底默认
+	 * (BQ2560X_ICHG_DEF_uA = 2040 mA / BQ256XX_IINDPM_DEF_uA = 2400 mA)。
+	 * 驱动内部是整除，所以实际值一律向下取整：
+	 *   ICHG    500000 uA -> 500000/60000 = 8        ->  480 mA
+	 *   VBATREG 4200000 uV -> (4200000-3856000)/32000 = 10 -> 4176 mV
+	 *   IPRECHG/ITERM 60000 uA -> 寄存器最小值 60 mA
+	 *   （IINDPM/VINDPM 不在此处，见 charger@6b 的 input-*-limit）
+	 *
+	 * 这两个值同时是**硬上限**：hw_init 把 ichg_max/vbatreg_max 设为这里，
+	 * 而两个 setter 都对它 clamp()，所以用户态通过 sysfs 写
+	 * constant_charge_current/voltage 只能往下调，不可能超过本节点。
+	 * 「实测电流与截止电压不得超过电池规格」由此在结构上成立，而非仅靠配置。
+	 *
+	 * 4.2 V 是常规 1S 截止电压。电池规格确认后（容量 → ICHG，是否有 4.35/4.4 V
+	 * 高压档 → VBATREG）再上调；上调即改这里两个数。
+	 */
+	v020_battery: battery {
+		compatible = "simple-battery";
+
+		constant-charge-current-max-microamp = <500000>;
+		constant-charge-voltage-max-microvolt = <4200000>;
+		precharge-current-microamp = <60000>;
+		charge-term-current-microamp = <60000>;
+	};
+};
+
+/**********SPI NAND (Winbond W25N02KVZEIR, 2Gbit/256MB)**********
+ * 与 V014 同型号。分区不在此处声明 —— 由 BoardConfig 的 RK_PARTITION_CMD_IN_ENV
+ * 经 U-Boot env(mtdparts) 传入，DTS 再写一份会与 fdt_fixup_mtdparts 打架。
+ * ball 39/41/42/44/47/48 = GPIO4_A6/A4/A3/A2/B0/B1。
+ */
+&sfc {
+	status = "okay";
+	pinctrl-names = "default";
+	pinctrl-0 = <&fspi_pins &fspi_cs0>;
+
+	flash@0 {
+		compatible = "spi-nand";
+		reg = <0>;
+		spi-max-frequency = <75000000>;
+		spi-rx-bus-width = <4>;
+		spi-tx-bus-width = <1>;
+	};
+};
+
+/* fspi_pins 的 clk=GPIO4_B1、cs0=GPIO4_B0、d0-d3=GPIO4_A2/A3/A4/A6 与 emmc 同 pad */
+&emmc {
+	status = "disabled";
+};
+
+/**********调试串口：UART2_M1 = ball 79/80 = GPIO1_B3/B2**********
+ * 沿用 V014 的做法：&fiq_debugger 持有控制台(console=ttyFIQ0)，&uart2 保持 disabled。
+ * rv1106.dtsi 的 fiq_debugger 节点自身不带 pinctrl，必须在这里补，否则 pads 不会被复用
+ * （rv1106g-evb2-v10.dts:90 是同样的写法）。
+ * 不把 &uart2 设 okay：serial8250 与 fiq_debugger 会争同一个 UART 的寄存器/中断。
+ */
+&fiq_debugger {
+	rockchip,irq-mode-enable = <1>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&uart2m1_xfer>;
+	status = "okay";
+};
+
+/**********SD 卡：SDMMC0 = ball 11/12/14/15/16/17/18 = GPIO3_A1..A7**********
+ * [2026-09-23 更正，实物确认] 本板贴装的是 **U32(TF-123-ARP9H17 MicroSD 卡座)**，
+ * **U8(MKDN128GCL-ZA 贴片 SD NAND)空贴** —— 与原写法正好相反。网表里两者是同一组
+ * 6 条信号网(SD_CLK/CMD/D0-D3)的备选封装。卡是**常插、不对外暴露**的，所以
+ * non-removable 是按实物意图写的，保留；不引用 sdmmc0_det 同理。
+ * （顺带一句事实：SD_DET 物理上接在 U32 pin9、带 R34 上拉；不引用它是有意
+ *   简化而非「U32 没贴」。R34 的料号 0402WGF4702TCE 是 **47k** —— 此前注释里
+ *   写的 4.7k 是读错料号(4702 vs 4701)，R34–R40 七颗都是 47k，全部在 BOM 里。）
+ * 代价记一笔：MMC_CAP_NONREMOVABLE 下 mmc_rescan 只扫一次(core.c:2257 那条
+ * "If there is a non-removable card registered, only scan once")，
+ * 枚举失败后不会自己重试 —— 调试期间每改一次都得重启才会重来。
+ * 注意 no-sd/sdio/mmc 才是本内核真正解析的属性；
+ * V014 里出现的 supports-sd/supports-sdio 在本树无任何代码读取，是惰性残留。
+ *
+ * [上板 2026-09-23] mmc1(SDMMC0) 失败，且**失败点会跳**，先后见过两处：
+ *   - 死在 ACMD51(SEND_SCR) 的数据阶段，-110（当时记下的嫌疑排序：D0 走线/上拉 →
+ *     GPIO3 IO 域电压 → 器件本身）；
+ *   - 枚举**通过**(读到 CID PNM "SDABC")，改死在 49.5MHz SD_HS 的块读上。
+ * 两处都在数据段，共同点是「400kHz 能通、50MHz 挂」—— 见下面相位那条。
+ *
+ * 下面两项都是「先摆上做对照实验」，**不是**已验证配置，别读成结论：
+ *   - non-removable：本节点本来就没有 cd-gpios，写上只是把「贴装件」写实。
+ *     mmc core 侧 MMC_CAP_NONREMOVABLE 只跳过卡检测配置(host.c:271)，不改初始化
+ *     时序，因此对本次 -110 无作用；代价是失败后不再重扫，要重启才会再试。
+ *   - rockchip,default-sample-phase = <90>：**2026-09-23 删掉，同日加回**。
+ *     删它的依据「实测对本槽 -110 无影响」本身没错，但**那个实验测不出相位**：
+ *     相位只在 timing <= MMC_TIMING_SD_HS 时下发(dw_mmc-rockchip.c:73)，而当时盯的
+ *     -110 在 400kHz ID 模式，90° 只折合 625ns、眼宽 2.5us —— 能推出的结论只是
+ *     「这一档与相位无关」。同日更晚复现出的失败点换了位置：枚举**通过**(读到
+ *     CID PNM "SDABC")，死在 49.5MHz SD_HS 的块读上，报 `dwmmc_rockchip
+ *     ffaa0000.mmc: Unexpected xfer timeout, state 0`(dw_mmc.c:3164，host 侧数据段
+ *     超时) —— 正是相位起作用的那一档。
+ *     [2026-09-23 二次更正] 上一条「参考板的 SD 控制器一律不设相位在本树不成立」
+ *     本身也是错的推断：V014 的 &sdmmc(GPIO3) 在那边跑的是 **WiFi SDIO**，
+ *     它上面承载 **SD 卡** 的是 &sdio(sdmmc1m0, GPIO2) 且**不设相位**。
+ *     也就是说 <90> 从来不是「SD 槽的参考值」，它是 WiFi 槽的值。
+ *
+ * [2026-09-23 16:5x 上板实测，本槽相位实验结案] **<90> 无效，且相位不是根因。**
+ *   先证明它真的生效了 —— 直接读相位寄存器：
+ *     VI_GRF(0xff000000)+0x50008 = 0x2 → bits[1:2]=01 → 90°（SDMMC_CON1, sample）
+ *     VI_GRF(0xff000000)+0x50004 = 0x2 → 90°（SDMMC_CON0, drive，驱动里是无条件 90）
+ *   注意这两个寄存器在 **grf syscon** 里、不在 CRU：clk-rv1106.c 的
+ *   rv1106_grf_clk_init() 用 of_iomap(of_get_parent(np))，父节点是 syscon@ff000000，
+ *   而 RV1106_SDMMC_CON1 = 0x8 + RV1106_VI_GRF_BASE(0x50000)。读 0xff3a5008 是错的。
+ *   生效了却依然读不出数据 → 一个已下发的 90° 救不回来，说明问题不在采样沿，
+ *   扫 0/180/270 的优先级随之下降。
+ *
+ * [2026-09-23 实测] 本槽数据段失败的**完整形态**（这是结论性的一步）：
+ *   ios = 49.5MHz / 4-bit / sd high-speed；读 1 扇区即 I/O error；
+ *   dmesg 逐条 `blk_update_request: I/O error, dev mmcblk1, sector 0..9`
+ *   —— 那是 mmc_blk_read_single()（drivers/mmc/core/block.c:1656，单扇区恢复路径）
+ *   每 512B 调一次 blk_update_request 留下的，**这条路径自己不打任何 dev_err**。
+ *   所以「dmesg 里没有驱动级报错」不等于没走到驱动，别据此判断失败层次。
+ *   尾部 `Unexpected xfer timeout, state 0` 出自 dw_mci_xfer_timer() 的**软定时器**，
+ *   state 0 = STATE_IDLE，是失败后残留定时器到期打的，**是尾随噪声不是原因**
+ *   （此前把 dw_mmc.c:3164 读成「host 侧数据段超时」也不准确）。
+ *
+ * 旁证，都指向板级/卡级、而不是 Linux 这侧：
+ *   - 同一颗 SoC 的另一路 mmc 完全正常：mmc2 = ff9a0000(SDMMC1, GPIO2) 上的 WiFi
+ *     SDIO 枚举成功、跑 50MHz、下固件（大数据量传输）→ SoC 的 mmc IP 与 DMA 无罪。
+ *   - U-Boot SPL 那句 `MMC error: The cmd index is 51, ret is -110`：**存疑，不作依据**。
+ *     本条此前写成「ACMD51 是 1-bit 数据读 → 连 1 位数据都失败」，**已被下面的实测
+ *     否定**（单线能零错误地读完 64MB，DAT0 是好的）。U-Boot 用的是它**自己那份
+ *     DTS**（无 bus-width、带 cd-gpios、max-freq 200M），SPL 阶段另有种种可能
+ *     （卡未稳定、上一次部分初始化留下的状态、cd-gpios 判卡），当前证据下定不了论。
+ *   - 网表：全板只有 U8 空贴(DNP)；SD 相关 7 颗上拉 R34–R40 是 47k，都在 BOM。
+ *
+ * 因此下面这个 <90> 只是「保留现状、不再是一号嫌疑」，不是结论。
+ * [2026-09-23 收尾] 后续实验 ② `bus-width = <1>` 一次就定位成功（见下方节点内注释），
+ * ① 换卡与 ③ 降频都没用上。结论：故障在 SD_D1/D2/D3 三条 net，属板级焊接/上拉问题，
+ * 与相位、频率、卡本身均无关。
+ */
+&sdmmc {
+	max-frequency = <50000000>;
+	/* [2026-09-23 已定位并修复：根因是 JTAG 抢占了 SDMMC0 的引脚]
+	 *
+	 * 根因：RV1106 的 GPIO3 IOC 里有 force_jtag_sdmmc（IOC syscon = 0xff538000，
+	 * 该寄存器在 +0x2f4 ⇒ 本组 = 0x202f4，绝对地址 0xFF5582F4；U-Boot 侧名字见
+	 * ioc_rv1106.h）。它是 HIWORD 掩码寄存器（低 16 位值、高 16 位写使能），上电
+	 * 后一直是 0x1 —— 即 SDMMC0 的引脚组被交给 JTAG。后果：4 位读**必挂**（每个
+	 * 数据块都报 SBE，RINTSTS 0x2000：D2/D3 不在 SDMMC0 手里，起始位永远判不到），
+	 * 而 1 位只用 D0 ⇒ 看起来完全正常。枚举（1 位）能过、4 位块读必挂，正好解释
+	 * 之前"失败点会跳"。
+	 *
+	 * 实测证据（2026-09-23，板上，非推断）：
+	 *  - 重启后 adb 一上线（uptime 8.98s）读 0xFF5582F4 = 0x1，之后 65s 内不变；
+	 *    再次重启同样 ⇒ 该位是 POR/早期就被置起，不是运行中被动态触发。
+	 *  - 写 0x00010000（val=0，mask=bit0）后读回 0x0；直接写 0x0 无效（掩码寄存器）。
+	 *  - 清位后重新枚举（unbind/bind）：/dev/mmcblk1p1 出现、FAT 分区可挂载可列目录；
+	 *    4 位 49.5MHz 顺序读 64MB/2.95s ≈ **21.7MB/s**、SBE 计数 0；随后 2 分钟内
+	 *    反复读 8MB×6 次全部通过，该位没被重新置起。
+	 * 修复：grf.c 新增 "rockchip,rv1106-ioc" 条目，postcore_initcall 阶段清掉该位
+	 * （上游对 RK3399/RK3588/RK3576 的同类问题就是"默认关闭 force_jtag"）。
+	 *
+	 * 本板 SD_DET（R34 47k 上拉，插卡后实测仍为高，与 SoC 期望的"低=有卡"相反）
+	 * 是否参与该位的自动清除**没有验证过**，与本修复无关，不要当成结论。
+	 *
+	 * 已排除的项（都实测过，留档以免重走）：四条数据线 poke 逐条只动自己那一位
+	 * （脚 8→bit2/脚 1→bit7/脚 2→bit6/脚 7→bit3，线通、无短接）、SoC 定义
+	 * sdmmc0_d0..d3 = GPIO3_A3/A2/A7/A6 与 netlist 一一对应、两张卡失败方式相同、
+	 * 停摄像头流水线不影响、CTRL/INTMASK 无退化、sd.c 无静默降位、IDMAC/PIO 与
+	 * 相位都无关（相位那两次实验的结论见下一条注释）。
+	 * <4> 现在可用（21.7MB/s）；曾经退到 <1>（6.4MB/s）只是当时的规避。 */
+	bus-width = <4>;
+	cap-sd-highspeed;
+	/* 相位 90° 已实测确认真的写进硬件（VI_GRF+0x50008=0x2）。它是**照抄参考板**的
+	 * 值，不是本槽扫出来的最优值；与上面那条 4 位故障无关（当时扫频 400kHz~50MHz
+	 * 全挂，那是 JTAG 抢引脚导致的，不是采样窗口问题）。 */
+	rockchip,default-sample-phase = <90>;
+	disable-wp;
+	non-removable;
+	no-sdio;
+	no-mmc;
+	pinctrl-names = "default";
+	pinctrl-0 = <&sdmmc0_clk &sdmmc0_cmd &sdmmc0_bus4>;
+	status = "okay";
+};
+
+/**********WiFi SDIO：SDMMC1_M0 = ball 109..114 = GPIO2_A0..A5**********
+ * 与 V014 相反：这里才是 SDIO 模组。4-bit、不可移除。
+ * 同一组 pad 的其它可能用户都必须让开：
+ *   - i2c4m0_xfer(GPIO2_A0/A1) —— rv1106.dtsi 的 &i2c4 默认值，见文末 i2c4 覆盖
+ *   - i2s0_pins(mux 2)、lcd_d8..d13(mux 3，RGB 屏) —— 见文末 vop/rgb 关闭
+ *   - uart0m1_ctsn/rtsn(GPIO2_A7/A6) 是蓝牙流控，见 &uart0
+ * 这里必须设 rockchip,default-sample-phase = <90>：V014 与 main_axiarz 都把 90 加在
+ * **承载 WiFi SDIO 的那个控制器**上（那边是 &sdmmc=GPIO3，本板是 &sdio=GPIO2 ——
+ * 控制器换了，角色没换）。
+ * [2026-09-23 更正] 原文紧接着写「本板此前把 90 摆在了 SD 控制器上、WiFi 控制器
+ * 反而不设，等于两个槽位都拿错了参考」—— **后半句是错的**：全树设该属性的 7 个
+ * dts/dtsi 取值一律 90，落点也无「WiFi 专属」规律(emmc 3 / sdio 2 / sdmmc 2)，
+ * 且 V014(rv1106g-luckfox-pico-ultra-spi-nand.dts:86) 的 **&sdmmc** 本身就设了 90。
+ * [2026-09-23 三次更正] 但那条 V014 证据现在也过期了：V014 的 &sdmmc(GPIO3) 在那边
+ * 跑的是 **WiFi SDIO**，它上面承载 SD 卡的是 &sdio(GPIO2) 且不设相位。所以
+ * 「90 对 SD 槽同样适用」这句已作废 —— 本板 SD 槽加了 90 并**实测确认已写进硬件，
+ * 仍然读不出数据**（详见上方 &sdmmc 的 16:5x 实测段）。**同理本槽(WiFi SDIO)的
+ * 这个 90° 也从未实测过，它是照抄参考板的值，别读成结论。**
+ *
+ * 与 SD 槽不同，SDIO 的初始化路径会进 50MHz(SD_HS) 档（mmc_sdio_init_card 里切高速），
+ * 那里 90° ≈ 5ns，与建立/保持窗口同量级，相位是真有作用的 —— dw_mmc-rockchip.c:73
+ * 对 timing <= MMC_TIMING_SD_HS 一律套用 default_sample_phase。
+ * <90> 取自参考板，**不是本槽实测值**；实测若另有更优值再改，不要在注释里留假结论。
+ */
+&sdio {
+	max-frequency = <50000000>;
+	bus-width = <4>;
+	cap-sd-highspeed;
+	cap-sdio-irq;
+	keep-power-in-suspend;
+	non-removable;
+	rockchip,default-sample-phase = <90>;
+	no-sd;
+	no-mmc;
+	mmc-pwrseq = <&sdio_pwrseq>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&sdmmc1m0_clk &sdmmc1m0_cmd &sdmmc1m0_bus4>;
+	status = "okay";
+};
+
+/**********蓝牙 HCI：UART0_M1 = ball 104..107 = GPIO2_B1/B0/A7/A6**********
+ * 四线，RTS/CTS 是 uart0m1 的硬件流控脚（不是 GPIO 模拟），故三组 pinctrl 都要。
+ * 必须覆盖共享 dtsi 的 <&uart0m0_xfer &uart0m1_xfer>：uart0m0 = GPIO0_A0/A1，
+ * 本板未接（ball 58/59 只到主控），留着会把两个 pad 抢走且 m0 无流控脚。
+ */
+&uart0 {
+	status = "okay";
+	pinctrl-names = "default";
+	pinctrl-0 = <&uart0m1_xfer &uart0m1_ctsn &uart0m1_rtsn>;
+};
+
+/* V020 没有 uart1 蓝牙、也没有 ESP32。uart3m0 = GPIO1_A0/A1，
+ * 正是本板 LED_BTN(ball 72) 与 LED_PWM/pwm4m0(ball 73) 所在 pad，必须关。
+ * uart3m1 是 GPIO1_D0/D1，本板不用。 */
+&uart1 {
+	status = "disabled";
+};
+
+&uart3 {
+	status = "disabled";
+};
+
+/**********I2C0：充电管理 U3 + 电量计 U7 = ball 75/76 = GPIO1_A3/A4**********
+ * 两个器件的中断都没接主控（CHARGE_nINT 未连，CW2015 的 SOC_ALERT 未连），
+ * 所以下面两个子节点都不写 interrupt。
+ * 总线由 5.1k 上拉到 3.3V。
+ */
+&i2c0 {
+	status = "okay";
+	pinctrl-names = "default";
+	pinctrl-0 = <&i2c0m0_xfer>;
+
+	/* U7 CW2015CHBD 电量计。驱动就在本内核树内
+	 * (drivers/power/supply/cw2015_battery.c)，但 CONFIG_BATTERY_CW2015 默认没开，
+	 * 由 BoardConfig 的 rv1106-v020.config 片段打开。
+	 *
+	 * compatible 取自驱动自己的 of_match 表（该文件 :755 只有 "cellwise,cw2015"），
+	 * 不是 Documentation/devicetree/bindings/power/cw2015_battery.txt ——
+	 * 那份 .txt 已过时（写的是 "cw201x" + bat_config_info），照它写不会 probe。
+	 *
+	 * 故意不写 cellwise,battery-profile：驱动对缺该属性是良性降级
+	 * （cw2015_parse_properties() 会 dev_warn("No battery-profile found, using
+	 * current flash contents") 后继续），沿用芯片 flash 内既有曲线。电池曲线留待标定。
+	 *
+	 * TODO(地址): 0x62 是 CW2015 的常规 SMBus 地址，板上未实测确认。
+	 *
+	 * power-supplies 指向 U3 BQ25601，是消除
+	 * "Failed to get supply state: -19" 的关键：cw2015_battery.c 的
+	 * cw_update_charge_status() 调 power_supply_am_i_supplied()，在没有任何
+	 * 已注册 supplier 时它返回 -ENODEV(-19)；有了这里的 phandle，上游的
+	 * charger power_supply 才会被找到，进而读它的 ONLINE 判断充电源接入。
+	 * 属性名出自本内核树 cw2015_battery.yaml:39（该文件已定义 power-supplies），
+	 * 不是自造的。
+	 *
+	 * 机制上能生效是因为 power_supply_core.c 注册时做
+	 *   psy->of_node = cfg->fwnode ? to_of_node(cfg->fwnode) : cfg->of_node;
+	 * 而 cw2015 驱动设的是 psy_cfg.fwnode = dev_fwnode(...)，to_of_node() 会把它
+	 * 还原成真正的 device_node，所以 power-supplies 能被解析到。
+	 *
+	 * 注意 cw2015 现在会 -EPROBE_DEFER 到 bq25601 注册完成 —— i2c0 上两颗器件的
+	 * probe 顺序不保证，所以冷启动与软重启都靠这条延迟路径收敛。
+	 */
+	cw2015: cw2015@62 {
+		compatible = "cellwise,cw2015";
+		reg = <0x62>;
+
+		/* [2026-09-23 A/B 已结案，恢复] A/B 期间这行被注释掉：那版不编入 bq256xx
+		 * 驱动，而 power_supply_check_supplies() 对解析不到的 supplier 只会一直
+		 * -EPROBE_DEFER、永不转成硬失败 —— 留着会让 cw2015 永远注册不上（电量计
+		 * 直接消失）。A/B 结论是「去掉驱动后循环照旧」→ 驱动无罪，故恢复。
+		 * **必须与 rv1106-v020.config 的 CONFIG_CHARGER_BQ256XX 成对**，见该处注释。 */
+		power-supplies = <&bq25601>;
+
+		status = "okay";
+	};
+
+	/**********U3 BQ25601RTWR 充电管理**********
+	 * 驱动由 Linux v5.12 回移进本内核树（drivers/power/supply/bq256xx_charger.c），
+	 * 由 rv1106-v020.config 片段打开 CONFIG_CHARGER_BQ256XX。回移未改动任何 API，
+	 * 只有三处带注释的刻意偏差（见该文件头部）。
+	 *
+	 * **不写 interrupts**：CHARGE_nINT(U3.7) 未连主控。驱动侧
+	 * bq256xx_probe() 用 `if (client->irq)` 保护中断注册，而 i2c-core 对缺
+	 * interrupts 属性的 client 会把 irq 钳成 0，所以这是官方支持的配置，
+	 * 不是我们发明的旁路。
+	 *
+	 * 无 IRQ 也不影响 online/status：bq256xx_get_charger_property() 每次被读都
+	 * 重新调 bq256xx_get_state() 现场读寄存器，而 0x00 与 0x08..0x0a 在
+	 * bq256xx_is_volatile_reg() 里是 volatile，绕过 regmap 缓存。
+	 * 也因此不需要加轮询 workqueue —— CW2015 自己每 8s 轮询 am_i_supplied()
+	 * 并在状态变化时 power_supply_changed()，拔插事件由它上报用户态。
+	 *
+	 * compatible 必须**精确**写成 "ti,bq25601" 且不能在前面再挂一个自定义
+	 * compatible：5.10 的 i2c-core-base.c 用 of_modalias_node() 取**第一个**
+	 * compatible 去匹配 id_table，而 probe 里
+	 *   bq->chip_info = &bq256xx_chip_info_tbl[id->driver_data];
+	 * 没有 NULL 检查 —— 一旦写了别的 compatible 排前面，会匹配上驱动却在
+	 * probe 里空指针。同理不要用 bq25890 等相近型号冒充。
+	 *
+	 * ti,watchdog-timeout-ms = <0> 是**刻意关闭**看门狗：回移的 v5.12 驱动只在
+	 * bq256xx_hw_init() 里设置一次超时，全文从不写 WD_RST(REG0x01 bit6)，没有
+	 * kick 路径。而看门狗到期并非"停止充电"—— BQ25601 会退回 default mode，
+	 * 把除 IINDPM/VINDPM/BATFET_* 外的寄存器全部恢复默认，也就是 ICHG 变回
+	 * 2040 mA、VREG 变回 4.208 V 并继续充电，比停充更危险。在没有 kick 逻辑
+	 * 之前必须关；将来要开，得先驱动侧补上周期性写 WD_RST。
+	 *
+	 * input-current-limit 取 500mA 是配合硬件：U3.2 是 PSEL，经 R20(5.1k) 上拉到
+	 * REGN，即硬件选定的 500mA(USB-SDP) 档，而非 2.4A 适配器档。驱动工作在 host
+	 * mode，寄存器写入会覆盖该 strap，所以这里显式跟硬件保持一致。电源来源与
+	 * 电池规格确认后再上调。
+	 */
+	bq25601: charger@6b {
+		compatible = "ti,bq25601";
+		reg = <0x6b>;
+
+		monitored-battery = <&v020_battery>;
+		input-current-limit-microamp = <500000>;
+		input-voltage-limit-microvolt = <4600000>;
+		ti,watchdog-timeout-ms = <0>;
+
+		status = "okay";
+	};
+};
+
+/**********MIPI CSI：2 data lanes (ball 123-128 = GPIO3_B6/B7/C0..C3)**********
+ * 只用 CK0 + D0 + D1。共享 dtsi 的 rkcif_mipi_lvds 用的是 <&mipi_pins>，
+ * 那个组含 mipi_lvds_d3n/d3p = GPIO3_B0/B1 与 ck1n/ck1p = GPIO3_B2/B3 ——
+ * **正是本板 WL_EN / WL_HOST_WAKE / BT_WAKE_HOST / HOST_WAKE_BT 所在 pad**，
+ * 所以必须换成只含 lanes 0/1 的本地组（同 V014）。
+ * 也因此本板不能按 SoC「可合并 4-lane」能力配成 4-lane：pins 117-120 已作它用。
+ */
+&csi2_dphy0 {
+	status = "okay";
+};
+
+&mipi0_csi2 {
+	status = "okay";
+};
+
+&rkcif_mipi_lvds {
+	status = "okay";
+	pinctrl-names = "default";
+	pinctrl-0 = <&mipi_pins_2lane>;
+};
+
+&rkcif_mipi_lvds_sditf {
+	status = "okay";
+};
+
+&rkisp_vir0 {
+	status = "okay";
+};
+
+/**********相机 I2C4_M2 = ball 5/7 = GPIO3_C7 / GPIO3_D0**********
+ * 显式写成 m2 有双重保险意义：rv1106.dtsi 的 &i2c4 默认 pinctrl-0 是
+ * <&i2c4m0_xfer> = GPIO2_A0/A1，与上面的 WiFi SDIO 冲突；共享 dtsi:456 虽已改成 m2，
+ * 但上游若改动就会静默抢走 SDIO 的 D0/D1。
+ *
+ * sensor 子节点(sc3336 @0x30, pwdn=GPIO3_C5, clock=refclk0, data-lanes=<1 2>)
+ * 来自共享 dtsi，与 V014 完全同构 —— V020 的相机接口逐项一致：
+ * MCLK 同为 ball 2 经 R8 的 mipi_refclk_out0(GPIO3_C4)、reset 同为 ball 3 = GPIO3_C5、
+ * 同为本 2-lane。故沿用，见下面 TODO。
+ */
+&i2c4 {
+	status = "okay";
+	pinctrl-names = "default";
+	pinctrl-0 = <&i2c4m2_xfer>;
+
+	/* U1 型号**已由网表确认**，不是沿用猜测：doc/Netlist_...enet 里 U1(gge224)
+	 * 的 DeviceName 与 FootprintName 都是 "SC3336"，35 pin，且逐脚对得上本节点：
+	 *   pin 3  = MIPI/LVDS_MCLK0  → clocks = <&cru MCLK_REF_MIPI0>
+	 *   pin 4/5= MIPI_I2C_SDA/SCL → 挂 &i2c4
+	 *   pin 6  = MIPI/LVDS_RST    → pwdn-gpios = <&gpio3 RK_PC5>
+	 *   pin 18/25 = CLK_P/N，23/24 = D1_N/P，26/33 = D0_N/P → data-lanes = <1 2> 两 lane
+	 * 故 compatible/reg/上电时序沿用共享 dtsi 的 sc3336 节点是**有依据的**。
+	 *
+	 * 残余未确认项（比"型号未知"窄得多，不要当成同一件事）：
+	 *   TODO(U1 变体): SC3336 只是传感器型号；镜头/IR-CUT 等变体信息体现在 IQ 文件名
+	 *     sc3336_CMK-OT2119-PC1_30IRC-F16 里（30IRC = 30° 红外截止）。需与 BOM 核对
+	 *     模组具体料号，否则会挂错 IQ/CAC 参数。
+	 *   TODO(U1 地址): 0x30 未实测，用 i2cdetect 确认。
+	 *   TODO(U1 strap): pin 28/35 是两个未命名网络($5N13856/$5N13889)，疑为上下拉配置脚，
+	 *     需查模组规格书确认是否影响输出格式/分辨率。
+	 */
+};
+
+/* 共享 dtsi 在 i2c3 上挂了 GT911 触摸屏，其 tp_rst/tp_irq 用 GPIO0_A3/A4 ——
+ * 正是本板 LED_CTRL0/LED_CTRL1 所在 pad。本板无触摸屏，关掉。 */
+&i2c3 {
+	status = "disabled";
+};
+
+/**********PWM3 = 激光（ball 60 = GPIO0_A2），PWM4 = 补光（ball 73 = GPIO1_A1）**********
+ * 必须覆盖共享 dtsi 的 mux：pwm3 被写成 m2、pwm4 被写成 m0+m1+m2 三组，
+ * 本板都在 m0。
+ * 安全默认：**不配任何 consumer**（无 pwm-backlight、无 leds-pwm），控制器 probe 后
+ * 输出保持关闭，只有用户态显式 echo 到 /sys/class/pwm/pwmchipN/pwmX/enable 才出波形。
+ * 另外 rv1106.dtsi 里 PWM 节点用 pinctrl-names = "active"（不是 "default"），
+ * 即 pinctrl 只在 enable 时才 apply —— 这是"启动全程不出波形"能成立的前提。
+ * 注意这只保证内核侧；iomux 复位电平与 u-boot 侧仍须用示波器实测确认（见验收项）。
+ */
+&pwm3 {
+	status = "okay";
+	pinctrl-names = "active";
+	pinctrl-0 = <&pwm3m0_pins>;
+};
+
+&pwm4 {
+	status = "okay";
+	pinctrl-names = "active";
+	pinctrl-0 = <&pwm4m0_pins>;
+};
+
+/* 共享 dtsi 把 pwm1 当 LCD 背光(pwm1m2_pins = GPIO3_D3)。本板无屏。 */
+&pwm1 {
+	status = "disabled";
+};
+
+/**********自研板无 LCD/触摸：释放 GPIO2_A0..A5 给 WiFi SDIO**********
+ * 共享 dtsi 的 RGB 屏用 lcd_d8..d13 = GPIO2_A0..A5（与 sdmmc1m0 同 pad），
+ * 还有 panel reset = GPIO0_A1、backlight = PWM1。全部关掉。
+ */
+/ {
+	panel: panel {
+		status = "disabled";
+	};
+
+	backlight: backlight {
+		status = "disabled";
+	};
+};
+
+&display_subsystem {
+	status = "disabled";
+};
+
+&rgb {
+	status = "disabled";
+};
+
+&rgb_in_vop {
+	status = "disabled";
+};
+
+&route_rgb {
+	status = "disabled";
+};
+
+&vop {
+	status = "disabled";
+};
+
+/**********共享 dtsi 带进来的、本板不要的**********/
+
+/* gpio-leds 的 work_led 用 GPIO3_C6（网表 ball 4 为空，未连接）→ 关掉，
+ * 否则会注册一个指向未连接 pad 的假 LED。 */
+&work_led {
+	status = "disabled";
+};
+
+/* rv1106-evb.dtsi:9 的 adc-keys 占 &saradc 通道 0 —— 正是本板 RECOVERY 的
+ * SARADC_IN0。该节点**没有 label**，只能按路径覆盖。
+ * 也不照抄它的阈值：keyup-threshold-microvolt = <1800000> 与
+ * press-threshold-microvolt = <400781> 是 EVB 的分压值，照搬会在本板上产生虚假按键。
+ * RECOVERY 的分压与语义确认前，先让两个通道以原始 IIO 形式暴露给用户态。
+ * TODO: 实测 /sys/bus/iio/devices/iio:device0/in_voltage0_raw 后，
+ *       再决定把它改成 adc-keys（恢复键）还是保持原始通道。 */
+/ {
+	adc-keys {
+		compatible = "adc-keys";
+		status = "disabled";
+	};
+};
+
+/* 共享 dtsi 在 spi0 上挂了 spidev，本板未引出 SPI0。 */
+&spi0 {
+	status = "disabled";
+};
+
+/**********ETH**********
+ * 网表给出了 U2 pins 97-100(ETH_RX_N/P, ETH_TX_N/P)，但磁性器件/RJ45/板对板出口
+ * 在当前网表中无法确认是否出板。按适配说明 §5.7：未出板就保持 disabled，
+ * 避免无意义的 PHY 探测与功耗。整机确认后再开。
+ */
+&gmac {
+	status = "disabled";
+};
+
+/**********USB Type-C**********
+ * CC1/CC2 各 5.1k 下拉 = UFP/Device 端，且无 VBUS 电源开关，故只作 peripheral，
+ * 不声明 Host 供电能力。VBUS_5V 经 F2 到 BQ25601，USB_DET_IN 到 ball 25。
+ */
+&usbdrd_dwc3 {
+	status = "okay";
+	dr_mode = "peripheral";
+};
+
+/**********RTC**********/
+&rtc {
+	status = "okay";
+};
+
+/**********音频**********
+ * 板上有模拟麦克风(MIC0/MIC1)与 CODEC_LINEOUT，保留共享 dtsi 的 acodec 配置。
+ * 无线模组的 PCM_OUT/CLK/IN/SYNC 只出现在 U4 引脚、未接主控，
+ * 因此蓝牙 SCO PCM 不能按当前网表启用（共享 dtsi 的 dsm_sound 本就 disabled）。
+ * TODO: codec/micbias/增益/声道需结合声学电路与整机麦克风数量确认。
+ */
+
+/********** ram oops / pstore **********
+ * 与 V014 同布局，理由见 V014 文件内的长注释（DRAM 256MB，ramoops 放 13MB 空隙，
+ * 避开 SPL BSS 0x001fe000 与 U-Boot TEXT 0x00200000）。
+ * TODO: U2 完整料号(RV1106G2/G3)与 DDR 容量待 BOM 确认；若 DDR 非 256MB，
+ *       该地址需重新核算。
+ */
+&reserved_memory {
+	ramoops@d00000 {
+		compatible = "ramoops";
+		reg = <0x00d00000 0x00040000>; /* 13MB，256KB */
+		record-size = <0x8000>;        /* 32KB × 约 4 条 oops/panic */
+		console-size = <0x20000>;      /* 128KB printk，watchdog 硬复位也能留尾 */
+		ftrace-size = <0x0>;
+		pmsg-size = <0x0>;
+	};
+};
+
+/**********本板本地 pinctrl 组**********/
+&pinctrl {
+	/* 只含 lanes 0/1 的 CSI 组，避开 GPIO3_B0-B3（WiFi/BT 控制脚）。
+	 * ck0 = GPIO3_C0/C1, d0 = GPIO3_C2/C3, d1 = GPIO3_B6/B7 */
+	mipi {
+		mipi_pins_2lane: mipi-pins-2lane {
+			rockchip,pins =
+				<3 RK_PC0 2 &pcfg_pull_none>,
+				<3 RK_PC1 2 &pcfg_pull_none>,
+				<3 RK_PC2 2 &pcfg_pull_none>,
+				<3 RK_PC3 2 &pcfg_pull_none>,
+				<3 RK_PB6 2 &pcfg_pull_none>,
+				<3 RK_PB7 2 &pcfg_pull_none>;
+		};
+	};
+
+	gpio-keys {
+		/* LED_BTN 含 RC 网络，偏置由板上决定 */
+		led_btn_pin: led-btn-pin {
+			rockchip,pins = <1 RK_PA0 RK_FUNC_GPIO &pcfg_pull_none>;
+		};
+
+		/* BTN_nQON 是电源按键状态输入，板上常规上拉 */
+		btn_nqon_pin: btn-nqon-pin {
+			rockchip,pins = <1 RK_PC0 RK_FUNC_GPIO &pcfg_pull_up>;
+		};
+	};
+
+	wl-en {
+		/* WL_EN = PWR_CTRL_M1 = GPIO0_A3（ball 62），由 sdio_pwrseq 驱动。
+		 * 显式写 RK_FUNC_GPIO，不依赖复位默认值 —— 本脚默认功能 1 是
+		 * pmic_sleep_m1，不声明就有被复用的风险。
+		 * bias-pull-down 与板上 R22(10k 到 GND) 一致：驱动接管前 WL_EN 保持低
+		 * = 模组被按住复位，直到 pwrseq 的 post_power_on 把它释放。 */
+		wl_en_pin: wl-en-pin {
+			rockchip,pins = <0 RK_PA3 RK_FUNC_GPIO &pcfg_pull_down>;
+		};
+	};
+};
+
+/**********LED_CTRL0..3 = ball 62/63/64/65 = GPIO0_A3..A6**********
+ * **GPIO0_A3（ball 62）已被 WL_EN 占用**，见上面的 sdio_pwrseq 与 wl_en_pin。
+ * 硬件上 WL_EN 与该脚的 R21→Q1 栅极网络并接，即 WL_EN 拉高时 Q1 一起导通。
+ * 这是改线后的既成事实，不是本树的选择。
+ *
+ * 其余三路（LED_CTRL1..3 = GPIO0_A4..A6）仍然刻意**不声明**。
+ *
+ * 适配说明 §7 把它们标为「输出 / LED 通道控制」，但没有给出极性，而极性决定
+ * 「输出低」到底是点亮还是熄灭。在没有极性的情况下抢先驱动一个安全相关输出，
+ * 本身就是猜测 —— 比保持复位态更危险。
+ *
+ * 复位态是高阻输入，由板上驱动电路自己的偏置决定，是唯一不引入假设的选择。
+ * bring-up 时先实测极性与默认电平，再二选一：
+ *   1) 类安全/常亮需求 → 在此声明 gpio-leds，配 default-state = "off"；
+ *   2) 仅用户态按需控制 → 保持不声明，用 libgpiod/gpioset 操作。
+ */

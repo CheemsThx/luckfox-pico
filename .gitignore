@@ -6,3 +6,8 @@ IMAGE/
 output/
 project/app/wifi_app/wpa_supplicant.conf
 config/
+
+# 板级设计输入（doc/）
+# 网表 .enet 是工程记录，入库。
+# Rockchip 数据手册是厂商资料、约 2MB，不入库；本地保留供查阅。
+doc/Rockchip_RV1106_Datasheet_V1.7.pdf
