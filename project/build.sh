@@ -2038,13 +2038,31 @@ function __RUN_POST_BUILD_SCRIPT() {
 function post_overlay() {
 	check_config RK_POST_OVERLAY || return 0
 
-	local tmp_path
+	local tmp_path overlay_dir
 	tmp_path=$(realpath $BOARD_CONFIG)
 	tmp_path=$(dirname $tmp_path)
-	if [ -d "$tmp_path/overlay/$RK_POST_OVERLAY" ]; then
-		rsync -a --ignore-times --keep-dirlinks --chmod=u=rwX,go=rX --exclude .empty \
-			$tmp_path/overlay/$RK_POST_OVERLAY/* $RK_PROJECT_PACKAGE_ROOTFS_DIR/
-	fi
+
+	# RK_POST_OVERLAY 是空格分隔的**列表**（如 "overlay-luckfox-config
+	# overlay-luckfox-buildroot-init ..."）。必须逐目录展开：
+	# 早先这里写成 [ -d "$tmp_path/overlay/$RK_POST_OVERLAY" ]，带引号使整串被
+	# 当成单个路径，测试恒为假 → 所有 overlay 静默不落地。改回逐目录循环。
+	#
+	# 但只改循环还不够：本脚本上游多处用 `IFS=,` ... 循环 ... `IFS=` 的写法来
+	# 临时改分隔符，而 `IFS=` 是把 IFS 设成**空串**而不是 unset —— 空 IFS 会
+	# **关闭所有单词切分**，且它是全局赋值、不会恢复。到 build_firmware 阶段
+	# IFS 已被 __GET_TARGET_PARTITION_FS_TYPE（约 :1844）清空，于是下面这行 for
+	# 会把整个列表当成**一个**词，循环只跑一次且路径不存在，overlay 依旧全丢。
+	# 实测：改循环后仍不落地，bash -x 可见 $overlay_dir 展开成了完整列表。
+	# 所以这里显式把 IFS 设回默认值，不依赖环境；用完还原，避免影响后续逻辑。
+	local saved_ifs="$IFS"
+	IFS=$' \t\n'
+	for overlay_dir in $RK_POST_OVERLAY; do
+		if [ -d "$tmp_path/overlay/$overlay_dir" ]; then
+			rsync -a --ignore-times --keep-dirlinks --chmod=u=rwX,go=rX --exclude .empty \
+				$tmp_path/overlay/$overlay_dir/* $RK_PROJECT_PACKAGE_ROOTFS_DIR/
+		fi
+	done
+	IFS="$saved_ifs"
 }
 
 function __RUN_PRE_BUILD_OEM_SCRIPT() {
