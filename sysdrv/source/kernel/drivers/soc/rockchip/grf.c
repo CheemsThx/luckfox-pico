@@ -266,6 +266,50 @@ static const struct rockchip_grf_info rv1126_grf __initconst = {
 	.num_values = ARRAY_SIZE(rv1126_defaults),
 };
 
+/*
+ * RV1106: 关掉 SDMMC0 引脚组（GPIO3_A1..A7）的 JTAG 强制占用。
+ *
+ * [2026-09-23 在 DW-TLY-V020 上实测] RV1106 的 GPIO3 IOC 里有 force_jtag_sdmmc
+ * 寄存器（U-Boot 侧名字见 arch/arm/include/asm/arch-rockchip/ioc_rv1106.h，
+ * 偏移 0x2f4；IOC syscon = 0xff538000，故 GPIO3 那组在 0x202f4）。它是 HIWORD
+ * 掩码寄存器：值位在低 16 位，写使能掩码在高 16 位。
+ *
+ * 现象与本条的关系：上电后（adb 一上线，up=9.0s 起）该寄存器一直是 0x1，整个
+ * 运行期不变 —— 也就是 SDMMC0 的引脚被交给 JTAG 用。后果是 **4 位 SD 完全不可
+ * 用**：主机确实按 4 位编程、ACMD6 也被卡 ACK，但每个数据块都报 SBE（起始位
+ * 错误，RINTSTS 0x2000），因为 D2/D3 不在 SDMMC0 手里；1 位只用 D0，所以看起
+ * 来完全正常（6.4MB/s、零错误），枚举也能通过 —— 这也解释了"失败点会跳"：
+ * 枚举（1 位）能过，4 位块读必挂。
+ * 把该位清零（写 0x00010000）后立即重新枚举：/dev/mmcblk1p1 出现，4 位
+ * 49.5MHz 顺序读 64MB/2.95s ≈ 21.7MB/s、SBE 计数 0，持续 2 分钟反复读无异常。
+ *
+ * 本树里 U-Boot 与内核都没有任何代码写这个位，而 grf.c 的匹配表原先只有
+ * rv1126（RV1106 的 dtsi 用的是 "rockchip,rv1106-ioc"，匹配不到），所以它一直
+ * 停在 POR 默认值。上游对 RK3399/RK3588/RK3576 的同类问题做法就是"默认关闭
+ * force_jtag"（内核 grf.c，U-Boot 侧是 CONFIG_ROCKCHIP_DISABLE_FORCE_JTAG），
+ * 这里按同样的思路处理。
+ *
+ * 注意：本板 SD_DET（R34 47k 上拉，插卡后实测仍为高）与 SoC 期望的"低=有卡"
+ * 相反，它是否参与该位的自动清除**没有验证过**；直接清位不依赖这条。
+ * 需要把 JTAG 引到 SD 引脚上调试的场合，删掉下面这条即可恢复原行为。
+ *
+ * 前提：本文件由 CONFIG_ROCKCHIP_GRF 控制编译（soc/rockchip/Makefile 里
+ * `obj-$(CONFIG_ROCKCHIP_GRF) += grf.o`）。luckfox_rv1106_linux_defconfig
+ * 默认没开这个符号，是本板的 arch/arm/configs/rv1106-v020.config 打开的；
+ * 那份 fragment 一旦被去掉，下面这段就不参与编译，SD 会毫无提示地退回老样子。
+ */
+#define RV1106_IOC_GPIO3_FORCE_JTAG	0x202f4
+
+static const struct rockchip_grf_value rv1106_ioc_defaults[] __initconst = {
+	{ "jtag sdmmc force", RV1106_IOC_GPIO3_FORCE_JTAG,
+		HIWORD_UPDATE(FORCE_JTAG_DISABLE, 1, 0) },
+};
+
+static const struct rockchip_grf_info rv1106_ioc_grf __initconst = {
+	.values = rv1106_ioc_defaults,
+	.num_values = ARRAY_SIZE(rv1106_ioc_defaults),
+};
+
 static const struct of_device_id rockchip_grf_dt_match[] __initconst = {
 	{
 		.compatible = "rockchip,px30-grf",
@@ -300,6 +344,9 @@ static const struct of_device_id rockchip_grf_dt_match[] __initconst = {
 	}, {
 		.compatible = "rockchip,rv1126-grf",
 		.data = (void *)&rv1126_grf,
+	}, {
+		.compatible = "rockchip,rv1106-ioc",
+		.data = (void *)&rv1106_ioc_grf,
 	},
 	{ /* sentinel */ },
 };

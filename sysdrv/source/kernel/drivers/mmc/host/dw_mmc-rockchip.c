@@ -391,6 +391,14 @@ static int dw_mci_rockchip_init(struct dw_mci *host)
 				    "rockchip,rk3288-dw-mshc"))
 		host->bus_hz /= RK3288_CLKGEN_DIV;
 
+	/* [2026-09-23 实验已做并否掉，故恢复 cpu_version 门控]
+	 * 曾临时去掉 `rockchip_get_cpu_version() == 0`，让 0xffaa0000 强制走 IDMAC
+	 * （即本 quirk 注释里的 "Select IDMAC interface"），用于验证"SD 4 位读失败
+	 * 是不是因为该控制器退回了 PIO 而非内部 DMA"。
+	 * 实测结论：改动确实生效（/sys/kernel/debug/mmc1/regs 的 CTRL 出现
+	 * SDMMC_CTRL_USE_IDMAC = BIT(25)、INTMASK 的 SDMMC_INT_HTO 被清），
+	 * 但 4 位读仍然失败，错误类型仍是 SBE（起始位错误）。⇒ 该假设不成立。
+	 * 完整排除清单与后续方向见 rv1106g-dw-tly-v020.dts 里 &sdmmc 的结案注释。 */
 	if (of_device_is_compatible(host->dev->of_node,
 				    "rockchip,rv1106-dw-mshc") &&
 	    rockchip_get_cpu_version() == 0 &&
