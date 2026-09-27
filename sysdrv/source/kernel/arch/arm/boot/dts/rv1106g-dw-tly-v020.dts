@@ -130,10 +130,23 @@
 	};
 
 	/* LED_BTN = ball 72 = GPIO1_A0；BTN_nQON = ball 95 = GPIO1_C0。
-	 * TODO: 极性、分压/RC 参数与按键语义均未实测，故 code 先取无副作用的 KEY_PROG1/2 ——
-	 * 即便极性相反也只会多出按键事件，不会触发关机。确认后再改成真正的 keycode。
-	 * （未用 KEY_POWER 是刻意的：BTN_nQON 与 BQ25601 的 QON 网络相关，
-	 *   在驱动侧无 IRQ 的情况下误上报 KEY_POWER 可能被用户态当成关机请求。） */
+	 *
+	 * [2026-09-23] btn-nqon 的 code 由 KEY_PROG2 改成 KEY_POWER —— 长按关机
+	 * 要的就是这个语义。当初取 KEY_PROG2 是怕"误上报 KEY_POWER 被用户态当成
+	 * 关机请求"，现在这个"请求"正是功能本身，顾虑反过来了。
+	 *
+	 * 关机的两半分别在：
+	 *   计时（按满 3 s 才算）在用户态 /oem/usr/bin/dw_powerkey；
+	 *   真断电在内核，bq256xx_charger.c 认领 pm_power_off 后写 BQ25601 的
+	 *   BATFET_DIS —— RV1106 没有 PMIC，不写这一位"关机"只是停 CPU 不断电。
+	 *
+	 * 3 s 这个阈值不是随便定的：按键与 U3 pin12（/QON）是同一个网络，
+	 * 而 BQ25601 的 /QON 被拉低 8 s(min)~12 s(max)（手册 tQON_RST）会硬复位
+	 * 整机，所以软件阈值必须留出足够余量，否则会在 umount 中途被硬复位。
+	 *
+	 * TODO(仍未实测)：两个按键的极性（ACTIVE_LOW 是照抄 V014 的假设）、
+	 * 分压/RC 参数。极性反了的表现是"按下=上报 release"，用 evtest 一看便知；
+	 * led-btn 的极性同样未验，但它不参与关机。 */
 	gpio_keys: gpio-keys {
 		compatible = "gpio-keys";
 		pinctrl-names = "default";
@@ -148,7 +161,7 @@
 		btn-nqon {
 			label = "BTN_nQON";
 			gpios = <&gpio1 RK_PC0 GPIO_ACTIVE_LOW>;
-			linux,code = <KEY_PROG2>;
+			linux,code = <KEY_POWER>;
 		};
 	};
 
