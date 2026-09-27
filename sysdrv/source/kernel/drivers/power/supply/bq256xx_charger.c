@@ -4,12 +4,17 @@
 //
 // Back-ported verbatim from Linux v5.12 for the DW-TLY-V020 board (RV1106,
 // BQ25601RTWR at I2C 0x6b), which needs no API changes for Linux 5.10.
-// Three deliberate deviations from v5.12, each commented at its site:
+// Four deliberate deviations from v5.12, each commented at its site:
 //   1. bq256xx_power_supply_init() detaches the battery supply from the device
 //      node so a "power-supplies" consumer matches only the charger supply.
 //   2. bq256xx_watchdog_time[] last entry 1600000 -> 160000 (hardware is 160 s).
 //   3. BQ256XX_WATCHDOG_MAX likewise 1600000 -> 160000, plus an explicit bound
 //      on the i + 1 index in bq256xx_hw_init().
+//   4. The driver cuts power on shutdown by setting BATFET_DIS (REG07 bit 5):
+//      bq256xx_shutdown() does it during device_shutdown(), bq256xx_power_off()
+//      as a pm_power_off backstop; a reboot notifier keeps plain `reboot` from
+//      turning into a power cut. RV1106 has no PMIC and nothing else in this
+//      tree registers pm_power_off, so without this "power off" is a lie.
 
 #include <linux/err.h>
 #include <linux/i2c.h>
@@ -26,6 +31,7 @@
 #include <linux/moduleparam.h>
 #include <linux/slab.h>
 #include <linux/acpi.h>
+#include <linux/reboot.h>
 
 #define BQ256XX_MANUFACTURER "Texas Instruments"
 
@@ -37,6 +43,29 @@
 #define BQ256XX_CHARGER_CONTROL_1		0x05
 #define BQ256XX_CHARGER_CONTROL_2		0x06
 #define BQ256XX_CHARGER_CONTROL_3		0x07
+/*
+ * REG07 bit 5 = BATFET_DIS：置 1 关掉"电池 → 系统"的 BATFET（Q4），整机断电。
+ * 按一下 /QON 按键能把它重新打开 —— 长按关机要用的就是这一位。
+ *
+ * [2026-09-24 在 DW-TLY-V020 上实测] 只听电池、没插 Type-C 时，
+ * `i2cset -y -f 0 0x6b 0x07 0x64` 板子**立即**黑掉。插着 Type-C 时同一条
+ * 命令**不会**黑 —— SYS 由 VBUS 经 buck 供着，BATFET 关不关与整机无关。
+ *
+ * 同一个寄存器另外两位，动手前必须分清（手册 SLUSCK5A 9.6.8）：
+ *
+ *   bit3 = BATFET_DLY   0 = 置 BATFET_DIS 后**立即**关断
+ *                       1 = 延迟 tBATFET_DLY（手册 typ 10 s）才关断
+ *                       本板 POR 默认 = 1（实测 REG07 = 0x4c）。上面那句"立即"
+ *                       用的是 0x64（bit3 被清掉了）；只置 bit5 的 0x6c 会走
+ *                       延迟路径 —— 延迟到底是不是 10 s，本板**没掐表验过**。
+ *                       TODO: 长按关机这条路上要的是立即断电，接电源策略一起
+ *                       定：要么在这里顺手把 bit3 也清了，要么在 hw_init 里清一次。
+ *
+ *   bit2 = BATFET_RST_EN  1 = 允许 /QON 被拉低 tQON_RST（8 s min / 12 s max）
+ *                        硬复位整机。本板 POR = 1。**永远不要动这一位** ——
+ *                        那条硬复位通路是系统卡死时唯一的退路。
+ */
+#define BQ256XX_BATFET_DIS		BIT(5)
 #define BQ256XX_CHARGER_STATUS_0		0x08
 #define BQ256XX_CHARGER_STATUS_1		0x09
 #define BQ256XX_CHARGER_STATUS_2		0x0a
@@ -1664,6 +1693,95 @@ static int bq256xx_parse_dt(struct bq256xx_device *bq,
 	return 0;
 }
 
+/*
+ * 长按关机的"断电"这一半。按键计时（按多久算长按）不在这里，在用户态的
+ * /oem/usr/bin/dw_powerkey —— 日志、阈值、取消逻辑放那边改起来不用动内核。
+ *
+ * 为什么必须由充电芯片来关这一下：RV1106 没有 PMIC，本内核树里也没有任何
+ * 地方注册 pm_power_off（arch/arm/mach-rockchip 全查过），所以默认的
+ * `poweroff` 只是把 CPU 停住 —— 电还在，WiFi 模组和充电芯片继续耗电，
+ * "关机"是假的。
+ *
+ * 这里**不负责** sync/umount：reboot(2) 的内核路径里没有文件系统收尾，
+ * 那部分只在用户态发生（/sbin/poweroff → init 的 ::shutdown: → umount -a）。
+ * 本驱动只管"最后一刻断电"。
+ *
+ * 写两处，日志会说明是哪一边生效的：
+ *
+ *   1. bq256xx_shutdown()（device_shutdown() 回调）—— 主路径。此时时钟、
+ *      引脚、I2C 总线都还活着；而且 i2c client 一定先于 adapter 被 shutdown
+ *      （device_shutdown 逆序遍历，子设备在前），不用担心总线被拆掉。
+ *      用 reboot notifier 分辨本次是"关机"还是"重启"：只有 SYS_POWER_OFF 才动，
+ *      否则 reboot 会变成断电。
+ *
+ *   2. bq256xx_power_off()（pm_power_off）—— 兜底。万一主路径那次写失败，
+ *      最后一刻在 machine_power_off() 里再试一次。
+ *
+ * 写完就可能没机会回读了（BATFET 一关，I2C 多半也一起没了），所以每次写都打
+ * ret 和回读值，让台架上的日志能直接区分"芯片收下了"和"总线当时已经不通"。
+ *
+ * TODO(策略未定)：插着适配器时写 BIT(5) 既关不掉整机（SYS 由 VBUS 供）、又可能
+ * 把充电一起停掉（Q4 是电池侧唯一通路）。所以"充电时长按关机"到底该不该走到
+ * 这里，还没定；定之前这里是无条件写的。
+ */
+static struct bq256xx_device *bq256xx_poweroff_dev;
+static bool bq256xx_poweroff_wanted;
+
+static void bq256xx_write_batfet_dis(struct bq256xx_device *bq, const char *who)
+{
+	unsigned int val;
+	int ret;
+
+	ret = regmap_update_bits(bq->regmap, BQ256XX_CHARGER_CONTROL_3,
+				 BQ256XX_BATFET_DIS, BQ256XX_BATFET_DIS);
+
+	/* 回读：能读到 bit5=1 说明芯片确实收下了这次写 */
+	if (regmap_read(bq->regmap, BQ256XX_CHARGER_CONTROL_3, &val))
+		val = 0xffffffff;
+
+	pr_info("bq256xx: BATFET_DIS via %s: write=%d reg07=0x%02x%s\n",
+		who, ret, val,
+		(val & BQ256XX_BATFET_DIS) ? " (chip accepted)" : "");
+}
+
+static void bq256xx_power_off(void)
+{
+	if (!bq256xx_poweroff_dev)
+		return;
+
+	bq256xx_write_batfet_dis(bq256xx_poweroff_dev, "pm_power_off");
+}
+
+/*
+ * device_shutdown() 回调。比 pm_power_off 早得多，此时整套 I2C 都还是好的。
+ */
+static void bq256xx_shutdown(struct i2c_client *client)
+{
+	struct bq256xx_device *bq = i2c_get_clientdata(client);
+
+	/* 重启/停机不碰 BATFET，否则 reboot 会变成掉电 */
+	if (!bq || !bq256xx_poweroff_wanted)
+		return;
+
+	bq256xx_write_batfet_dis(bq, "shutdown");
+}
+
+/*
+ * reboot notifier 在 kernel_shutdown_prepare() 一开头就被调用，比
+ * device_shutdown() 更早，所以 shutdown 回调里能读到正确的 action。
+ */
+static int bq256xx_reboot_notifier(struct notifier_block *nb,
+				   unsigned long action, void *data)
+{
+	bq256xx_poweroff_wanted = (action == SYS_POWER_OFF);
+
+	return NOTIFY_DONE;
+}
+
+static struct notifier_block bq256xx_reboot_nb = {
+	.notifier_call = bq256xx_reboot_notifier,
+};
+
 static int bq256xx_probe(struct i2c_client *client,
 			 const struct i2c_device_id *id)
 {
@@ -1744,7 +1862,30 @@ static int bq256xx_probe(struct i2c_client *client,
 		return ret;
 	}
 
-	return ret;
+	/*
+	 * 芯片真的初始化成功了才接管关机动作；失败就留给系统原来的行为
+	 * （"关机 = 停 CPU 但不断电"），至少不会在没配好的芯片上乱写寄存器。
+	 * pm_power_off 是全局唯一的，本内核树里只有这一个驱动认领它。
+	 */
+	bq256xx_poweroff_dev = bq;
+	pm_power_off = bq256xx_power_off;
+	register_reboot_notifier(&bq256xx_reboot_nb);
+
+	return 0;
+}
+
+static int bq256xx_remove(struct i2c_client *client)
+{
+	struct bq256xx_device *bq = i2c_get_clientdata(client);
+
+	/* 别让 pm_power_off / notifier 指向已经卸掉的驱动 */
+	if (bq256xx_poweroff_dev == bq) {
+		unregister_reboot_notifier(&bq256xx_reboot_nb);
+		pm_power_off = NULL;
+		bq256xx_poweroff_dev = NULL;
+	}
+
+	return 0;
 }
 
 static const struct i2c_device_id bq256xx_i2c_ids[] = {
@@ -1790,6 +1931,8 @@ static struct i2c_driver bq256xx_driver = {
 		.acpi_match_table = bq256xx_acpi_match,
 	},
 	.probe = bq256xx_probe,
+	.remove = bq256xx_remove,
+	.shutdown = bq256xx_shutdown,
 	.id_table = bq256xx_i2c_ids,
 };
 module_i2c_driver(bq256xx_driver);
