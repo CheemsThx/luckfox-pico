@@ -984,6 +984,7 @@ dtb-$(CONFIG_ARCH_ROCKCHIP) += \
 	rv1103g-rmsl311-dloc-sl-v10.dtb \
 	rv1103g-scaner-v10.dtb \
 	rv1106g-38x38-ipc-v10.dtb \
+	rv1106g-dw-tly-v015.dtb \
 	rv1106g-38x38-ipc-v10-spi-nand.dtb \
 	rv1106g-evb1-mcu-display-v11.dtb \
 	rv1106g-evb1-mcu-display-v20.dtb \
