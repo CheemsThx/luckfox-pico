@@ -1,0 +1,67 @@
+#!/bin/sh
+# DW-TLY-V020：长按 BTN_nQON 关机。
+#
+# 由 /oem/usr/bin/RkLunch.sh 的 rcS 循环启动（它遍历 /oem/usr/etc/init.d/S??*），
+# 所以编号没有先后讲究，45 只是挑了个空的。
+#
+# 阈值 3 s 的理由在 dw_powerkey.c 的文件头：按键和 U3 pin12（/QON）是同一个
+# 网络，而 BQ25601 的 /QON 被持续拉低 8~12 s 会硬复位整机，计时从按下算起，
+# 所以"阈值 + 整个关机流程"都要挤在 8 s 里。程序到点后交给 /sbin/poweroff
+# （由 init 停服务、umount、最后 reboot(RB_POWER_OFF)），最多等 4 s，
+# 3 + 4 = 7 s，仍在硬件 8 s 下限之内。
+#
+# 台架上验证（不会真关机）：
+#   /oem/usr/bin/dw_powerkey -n -v        # 打印每个按键事件，顺手验极性
+# 改阈值：改下面的 HOLD_S，然后 /oem/usr/etc/init.d/S45dwpowerkey stop/start。
+
+HOLD_S=3
+
+BIN=/oem/usr/bin/dw_powerkey
+
+start_daemon()
+{
+	[ -x "$BIN" ] || return 0
+
+	# 日志进 kmsg（dmesg 里看得见）；没这个文件就退回 console
+	OUT=/dev/kmsg
+	[ -w "$OUT" ] || OUT=/dev/console
+
+	# 按键是"最后一条退路"，不能因为守护进程意外退出就没了：
+	# 这里带一个朴素的看护循环。连续快速失败（起不到 5 s 就退）时拉长间隔，
+	# 失败太多次就放弃，免得一直往 kmsg 刷同样的错误。
+	(
+		fails=0
+		while :; do
+			t0=$(cut -d' ' -f1 /proc/uptime)
+			"$BIN" -t "$HOLD_S" > "$OUT" 2>&1
+			t1=$(cut -d' ' -f1 /proc/uptime)
+			ran=$(awk "BEGIN{print ($t1-$t0)>=5 ? 1 : 0}")
+			if [ "$ran" = "1" ]; then
+				fails=0
+				sleep 1
+			else
+				fails=$((fails + 1))
+				echo "dw_powerkey: exited early (x$fails), retry in 10s" > "$OUT"
+				[ "$fails" -ge 6 ] && break
+				sleep 10
+			fi
+		done
+	) &
+}
+
+case "$1" in
+	start)
+		start_daemon
+		echo "dw_powerkey: started (hold ${HOLD_S}s)"
+		;;
+	stop)
+		# 连看护循环一起收掉：先杀子进程再杀循环本身（按命令行匹配）
+		pkill -f 'dw_powerkey -t' 2>/dev/null
+		killall dw_powerkey 2>/dev/null
+		echo "dw_powerkey: stopped"
+		;;
+	*)
+		echo "Usage: $0 {start|stop}"
+		exit 1
+		;;
+esac

@@ -1,0 +1,4 @@
+# 构建产物，和 project/app/wifi_app/.gitignore 一个惯例
+install_out
+out
+dw_powerkey
