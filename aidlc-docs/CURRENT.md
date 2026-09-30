@@ -6,6 +6,7 @@
 - 起点/HEAD：`f2fd2dee9b339ba044f7813aaac9f1c10f57a58d`（"为 SDK 工作分支固化 Claude 执行规则"）
 - 工作区：`git status --short --branch` 干净；本分支**无 upstream**（未 push、未设跟踪）
 - 相对 `main`：领先 22 个提交
+- 2026-09-30 二次复核：第 5 节原"字节扫描无区分力"结论系 `grep` 包装函数误判，**已更正**（见第 5 节）
 - 本文件**不是**验收结论或交付说明，只登记截至上述 HEAD 的现状、已验证项、未验证项与已知证据缺口
 
 ## 1. 边界：V020 NAND 验证板 ≠ V015 eMMC 量产
@@ -93,22 +94,45 @@
   独立脚本实现（`/tmp/dw012-v015-smb-off-allsave.log` 内的标记为 `dw-tly-v015-disable-smb-post`），
   与本分支 V020 的 `luckfox-buildroot-ble-fix-post.sh` 实现**不是同一处代码**，不能互相代替验证。
 
-## 5. 已知证据缺口（本次复核发现）
+## 5. 证据缺口与二次复核更正
 
-- `2026-09-30-v020-smb-nmb-autostart-disabled.md` 第 8 节称"新镜像 rootfs 字节中找不到 `S91smb`
-  文件名，而前一候选 rootfs 中可找到"的**字节扫描辅助检查不成立，应弃用**：
-  `rootfs.img` 是 `UBI image, version 1`（UBIFS，目录项被压缩），对**任何**存在的脚本名都匹配不到。
-  实测在对所有 6 个 V020 候选（含改动前的 0936、0905 等）扫描 `S91smb`、`S40network`、`S50sshd`、
-  `smbd`、`nmbd`，结果**一律为 0**，说明该方法无区分力；前一候选 `176faa8c` 目录内甚至不含
-  `rootfs.img`。该条不否定主论据（打包源目录无 `S91smb` + 包内 rootfs 与 `output/image/rootfs.img`
-  逐字节一致 + 构建日志顺序），但**不应作为独立证据引用**。
-- 受上述限制，本复核**未能**在离线环境内直接解包 UBI/UBIFS 以列出包内 `/etc/init.d`（`ubireader`
-  未安装，WSL 内核无 `nandsim`/`ubifs` 模块）；包内 `S91smb` 缺失目前由"打包源目录 + 成像顺序"
-  推定，而非对 UBI 内容逐一枚举。
+### 5.1 更正：字节对照并非"无区分力"
+
+- **撤销**本文件先前登记的"对所有 6 个候选扫描 `S91smb`/`S40network`/`S50sshd`/`smbd`/`nmbd`
+  一律为 0、字节扫描无区分力"这一结论。该结论**系工具误判，不成立**。
+- 误判成因：本环境交互 shell 中的 `grep` 是**包装函数**（转发到自带 `ugrep`，并前置 `-I` 跳过
+  二进制文件）。对 `file` 判定为二进制（`UBI image, version 1`）的 `rootfs.img`，它一律返回
+  rc=1、计数 0；而系统 `/usr/bin/grep`（GNU grep 3.7）`grep -c` 即使**不加** `-a` 也能正常计数
+  （0936 得 1）。前次"一律为 0"由此产生。
+- 二进制安全复验（`LC_ALL=C grep -aob -m1`，显式 `-a`，6 个候选逐一扫描）：
+
+  | 候选 | `S91smb` | `S40network` | `S50sshd` |
+  |---|---|---|---|
+  | 2230 / 2309 / 2354 / 0905 / 0936 | `55999064` | `55994928` | `55996416` |
+  | 1010 | **未命中** | `55994928` | `55996416` |
+
+- 结论：该**原始字节对照在 0936 与 1010 这两个具体候选之间有区分力**（1010 起少了 `S91smb`，
+  其余脚本名偏移不变），与 `2026-09-30-v020-smb-nmb-autostart-disabled.md` 第 8 节的**原表述一致**，
+  后者无需改动。
+- **机理与限度**：命中的是 UBIFS 中未压缩存储的目录项名（0936 中 `S91smb` 名称之后紧跟其数据
+  znode，可见 `LUCKFOX_FDT_DTB=/tmp/...` 等压缩后的脚本内容）。但整文件字节扫描**不是对 UBIFS 树
+  的枚举**（本复核未解析 UBIFS，目录项可能落在不同 LEB），因此**"未命中"仍不能单独证明 UBIFS 中
+  绝对不存在该脚本**。该对照**只作辅助检查**。
+- 主论据不变：打包源目录 `output/out/rootfs_uclibc_rv1106/etc/init.d/` 内无 `S91smb` + 包内
+  `rootfs.img` 与 `output/image/rootfs.img` 逐字节一致（SHA-256 `5f5cbc72…`）+ 删除发生在
+  `mkfs.ubifs`/ubinize 成像**之前**的构建日志顺序。
+
+### 5.2 其余缺口
+
+- 本文件先前"前一候选 `176faa8c` 目录内甚至不含 `rootfs.img`"一句**无法在本树复核，已删除**；
+  `IMAGE/` 下现存的 6 个候选目录**全部**含 `rootfs.img`（各 59,899,904 字节）。
+- 本复核**未能**在离线环境内解包 UBI/UBIFS 逐一列出包内 `/etc/init.d`（`ubireader` 未安装，
+  WSL 内核无 `nandsim`/`ubifs` 模块）；包内 `S91smb` 缺失由"打包源目录 + 成像顺序 + 上述辅助字节
+  对照"推定，而非对 UBI 内容枚举。
 
 ## 6. 本分支证据文件索引
 
-- `aidlc-docs/evidence/2026-09-30-v020-smb-nmb-autostart-disabled.md`（SMB/NMB 关闭；其字节扫描结论见第 5 节更正）
+- `aidlc-docs/evidence/2026-09-30-v020-smb-nmb-autostart-disabled.md`（SMB/NMB 关闭；其第 8 节字节扫描表述经二进制安全复验成立，说明见第 5.1 节）
 - `aidlc-docs/evidence/2026-09-30-v020-cpu-dvfs-removed.md`（CPU DVFS 撤销；现行结论）
 - `aidlc-docs/evidence/2026-09-30-v020-cpu-dvfs-fixed-0v9.md`（原"限频"方案，**结论已被上一条取代**，仅根因分析可参考）
 - `aidlc-docs/evidence/2026-09-03-dw-sdk-003-pstore-ramoops.md`、`2026-09-02-csi-i2c4-disabled-root-cause.md`（更早切片）
