@@ -77,6 +77,13 @@
 
 /**********SDIO-WIFI on GPIO3 sdmmc0（与官方 Ultra 一致）**********
  * CLK/CMD: GPIO3_A4/A5  D0-D3: GPIO3_A3/A2/A7/A6  DET: GPIO3_A1
+ *
+ * 注意：RV1106 的 GPIO3 IOC 有 force_jtag_sdmmc（0xff538000 + 0x202f4），上电即为 1，
+ * 会把 SDMMC0 的 GPIO3_A1..A7 交给 JTAG，导致 4 位传输每个块报 SBE（1 位不受影响）。
+ * V015 的 Wi-Fi SDIO 正好在这组脚/这个控制器上，因此本板必须靠内核 grf.c 的
+ * "rockchip,rv1106-ioc" 条目在 postcore_initcall 阶段清掉该位；配套要求内核开启
+ * CONFIG_ROCKCHIP_GRF（见 arch/arm/configs/rv1106-v015.config）。
+ * 该根因在 DW-TLY-V020 实板实测确认；V015 尚无实板，上板后请 devmem 读 0xff5582f4 复核。
  */
 &sdmmc {
 	max-frequency = <50000000>;

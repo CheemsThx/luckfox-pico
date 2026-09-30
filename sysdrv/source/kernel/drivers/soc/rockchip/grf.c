@@ -266,6 +266,54 @@ static const struct rockchip_grf_info rv1126_grf __initconst = {
 	.num_values = ARRAY_SIZE(rv1126_defaults),
 };
 
+/*
+ * RV1106: 关掉 SDMMC0 引脚组（GPIO3_A1..A7）的 JTAG 强制占用。
+ *
+ * 寄存器事实：RV1106 GPIO3 IOC 有 force_jtag_sdmmc，U-Boot 侧定义见
+ * arch/arm/include/asm/arch-rockchip/ioc_rv1106.h（struct rv1106_gpio3_ioc，
+ * check_member 固定偏移 0x02f4）。IOC syscon 基址 0xff538000（rv1106.dtsi 的
+ * `ioc: syscon@ff538000`，compatible "rockchip,rv1106-ioc"），GPIO3 段从
+ * +0x20000 起，故本寄存器 = 0x202f4，绝对地址 0xff5582f4。它是 HIWORD 掩码
+ * 寄存器（低 16 位值、高 16 位写使能）：写 0x0 无效，必须写 0x00010000 才清得掉。
+ *
+ * 为什么需要它：该位上电即为 1，即 SDMMC0 的 GPIO3_A1..A7 引脚组被交给 JTAG，
+ * D2/D3 不在 SDMMC0 手里 ⇒ 4 位数据传输每个块都报 SBE（起始位错误，RINTSTS
+ * 0x2000），而 1 位只用 D0 所以看起来完全正常（枚举能过、4 位块读必挂）。
+ * 该事实由 DW-TLY-V020 实板实测得出（2026-09-23：重启后读 0xff5582f4 = 0x1 且
+ * 运行期不变；写 0x00010000 后读回 0x0，4 位 49.5MHz 顺序读零 SBE），
+ * 详见 aidlc-docs/evidence/。
+ *
+ * 与 V015 的关系：V015 是把 **Wi-Fi SDIO** 挂在同一个控制器/引脚组上
+ * （rv1106g-dw-tly-v015.dts 的 &sdmmc = mmc@ffaa0000，GPIO3_A1..A7，4 位）。
+ * 本树里 U-Boot 与内核都没有任何代码写过这一位，而 grf.c 的匹配表原先只有
+ * rv1126（RV1106 的 dtsi 用 "rockchip,rv1106-ioc"，匹配不到），所以不改的话
+ * 它会一直停在 POR 默认值。上游对 RK3399/RK3588/RK3576 的同类问题做法就是
+ * “默认关闭 force_jtag”（U-Boot 侧对应 CONFIG_ROCKCHIP_DISABLE_FORCE_JTAG）。
+ *
+ * 边界：清位只影响 GPIO3_A1..A7 —— V015 上这组脚全部给 Wi-Fi SDIO 用，
+ * 不承载其他功能；代价仅仅是这几个脚不再被 JTAG 占用（本板无 JTAG 调试需求）。
+ *
+ * 前提：本文件由 CONFIG_ROCKCHIP_GRF 控制编译（soc/rockchip/Makefile 里
+ * `obj-$(CONFIG_ROCKCHIP_GRF) += grf.o`）。luckfox_rv1106_linux_defconfig 默认
+ * 没开这个符号（只有 RV1126 的板级会开），本板是 arch/arm/configs/rv1106-v015.config
+ * 打开的；那份 fragment 一旦被去掉，下面这段就不参与编译，Wi-Fi SDIO 会毫无提示
+ * 地退回旧行为。rockchip_grf_init 是 postcore_initcall，早于 mmc 控制器 probe。
+ *
+ * 未验证项（不得写成已通过）：V015 尚无实板，上板后请先 devmem 读 0xff5582f4
+ * 确认清零、再确认 Wi-Fi SDIO 4 位枚举与吞吐。
+ */
+#define RV1106_IOC_GPIO3_FORCE_JTAG	0x202f4
+
+static const struct rockchip_grf_value rv1106_ioc_defaults[] __initconst = {
+	{ "jtag sdmmc force", RV1106_IOC_GPIO3_FORCE_JTAG,
+		HIWORD_UPDATE(FORCE_JTAG_DISABLE, 1, 0) },
+};
+
+static const struct rockchip_grf_info rv1106_ioc_grf __initconst = {
+	.values = rv1106_ioc_defaults,
+	.num_values = ARRAY_SIZE(rv1106_ioc_defaults),
+};
+
 static const struct of_device_id rockchip_grf_dt_match[] __initconst = {
 	{
 		.compatible = "rockchip,px30-grf",
@@ -300,6 +348,9 @@ static const struct of_device_id rockchip_grf_dt_match[] __initconst = {
 	}, {
 		.compatible = "rockchip,rv1126-grf",
 		.data = (void *)&rv1126_grf,
+	}, {
+		.compatible = "rockchip,rv1106-ioc",
+		.data = (void *)&rv1106_ioc_grf,
 	},
 	{ /* sentinel */ },
 };

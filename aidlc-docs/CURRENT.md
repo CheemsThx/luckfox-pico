@@ -1,12 +1,12 @@
 # DW-012 当前状态快照（SDK 仓 / `codex/dw-012-v015-emmc-adaptation`）
 
-- 生成日期：2026-09-30（本文件由一次只读复核产生；除本文件外未改动任何仓库文件，未构建、未烧录、未联网、未 push）
+- 生成日期：2026-09-30（初版为只读复核；本节随 DW-012 / S1「4 位 Wi-Fi SDIO 与 force_jtag_sdmmc」切片更新，该切片含源码/配置最小修复与内核构建）
 - 仓库与工作树：`/home/henry/rv1106/luckfox-pico-v015-main-axiarz`（`git worktree list` 实测，主仓为 `/home/henry/rv1106/luckfox-pico`）
 - 分支：`codex/dw-012-v015-emmc-adaptation`
-- 起点/HEAD：`fd97d65cbeefb2fb2268fe5975103423803ea095`（"为 SDK 工作分支固化 Claude 执行规则"，2026-09-30 14:53:02 +0800）
-- 工作区：`git status --short --branch` 干净（无暂存、无未跟踪）；本分支**无 upstream**（`git rev-parse @{u}` → `fatal: no upstream configured`）
-- 相对 `main`（`994243753`）领先 16 个提交；相对本树基线 `main_axiarz`（`7b9a33dc7`）领先 4 个提交
-- 本文件**不是**验收结论，也不是交付说明或烧录授权；只登记截至上述 HEAD 的现状、已验证项、未验证项与已知证据缺口
+- 起点/HEAD（本切片改动前）：`077b56b3d1dbc906c36d259f9a2f3e10e9370ae4`（"限制 Claude 工作切片不得写入仓库外记忆"）
+- 工作区：本切片开始与结束时均无未提交脏文件；本分支**无 upstream**（`git rev-parse @{u}` → `fatal: no upstream configured`）
+- 相对本树基线 `main_axiarz`（`7b9a33dc7`）领先 4 个提交（本切片提交另计）
+- 本文件**不是**验收结论，也不是交付说明或烧录授权；只登记当前现状、已验证项、未验证项与已知证据缺口
 
 ## 1. 边界：V015 eMMC 量产候选 ≠ V020 NAND 验证板
 
@@ -21,14 +21,16 @@
 
 ## 2. 本分支承载的板级事实（代码/配置事实，可在本树逐条复核）
 
-V015 板级适配涉及下列 4 个源码/配置文件；分支还包含证据、状态和 Claude 规则文件（以 `git diff --name-only main_axiarz..HEAD` 为准）：
+V015 板级适配涉及下列源码/配置文件；分支还包含证据、状态和 Claude 规则文件（以 `git diff --name-only main_axiarz..HEAD` 为准）：
 
 | 文件 | 作用 |
 |---|---|
-| `project/cfg/BoardConfig_IPC/BoardConfig-EMMC-Buildroot-RV1106_DW_TLY_V015-IPC.mk` | V015 eMMC 板级配置（131 行） |
+| `project/cfg/BoardConfig_IPC/BoardConfig-EMMC-Buildroot-RV1106_DW_TLY_V015-IPC.mk` | V015 eMMC 板级配置（含内核 fragment 挂接） |
 | `project/cfg/BoardConfig_IPC/dw-tly-v015-disable-smb-post.sh` | V015 专属 rootfs 后处理（关闭 Samba 开机自启） |
-| `sysdrv/source/kernel/arch/arm/boot/dts/rv1106g-dw-tly-v015.dts` | V015 顶层 DTS（281 行，`model = "Dongwei DW-TLY-V015 eMMC"`） |
+| `sysdrv/source/kernel/arch/arm/boot/dts/rv1106g-dw-tly-v015.dts` | V015 顶层 DTS（`model = "Dongwei DW-TLY-V015 eMMC"`） |
 | `sysdrv/source/kernel/arch/arm/boot/dts/Makefile` | 注册 `rv1106g-dw-tly-v015.dtb`（Makefile:987） |
+| `sysdrv/source/kernel/arch/arm/configs/rv1106-v015.config`（3.4 新增） | V015 专属内核 fragment：`CONFIG_ROCKCHIP_GRF=y` |
+| `sysdrv/source/kernel/drivers/soc/rockchip/grf.c`（3.4 改，**共享**内核文件） | 增 `rockchip,rv1106-ioc` 条目，清 SDMMC0 的 force_jtag；仅当 `CONFIG_ROCKCHIP_GRF=y` 时参与编译 |
 
 关键配置（`BoardConfig-EMMC-Buildroot-RV1106_DW_TLY_V015-IPC.mk`）：
 
@@ -96,6 +98,19 @@ DTS 事实（`rv1106g-dw-tly-v015.dts`，派生自 `rv1106-luckfox-pico-ultra-ip
 - 本分支内核基线 `7b9a33dc7` 已含 "SIGKILL 停 ISP 时先泄 DMA" 的 ISP 修复。
 - 本分支**未**修改共享 Buildroot defconfig、未改其他板型 BoardConfig/DTS。
 
+### 3.4 V015 4 位 Wi-Fi SDIO 的 force_jtag_sdmmc 修复（DW-012 / S1，已移植并构建通过；**非实板**）
+
+- 结论：V020 上实测的 RV1106 SDMMC0 `force_jtag_sdmmc` 风险**适用于 V015**（代码/配置级高置信推断；**无 V015 实板**）。
+  V015 的 Wi-Fi SDIO 就在 SDMMC0/GPIO3_A1..A7、4 位；本树 U-Boot 与内核都不写该位，故其停在 POR 默认值（V020 实测为 `0x1`）。
+- 最小移植（4 文件）：`drivers/soc/rockchip/grf.c` 增 `rockchip,rv1106-ioc` 条目（写 `0x202f4=0x10000` 清位）；
+  新增 `arch/arm/configs/rv1106-v015.config`（`CONFIG_ROCKCHIP_GRF=y`）；V015 BoardConfig 的
+  `RK_KERNEL_DEFCONFIG_FRAGMENT` 改为 `"rv1106-bt.config rv1106-v015.config"`；V015 DTS `&sdmmc` 加注释。
+  共享 `rv1106-bt.config` 未改，本分支其他板型不打开该符号 ⇒ 行为边界不变。
+- 验证（构建级，**非**实板）：`./build.sh kernel` 退出码 0；`objs_kernel/.config:4232 CONFIG_ROCKCHIP_GRF=y`；
+  `grf.o` 存在、`System.map` 含 `rv1106_ioc_grf`/`rv1106_ioc_defaults`、`strings grf.o` 含 `jtag sdmmc force` 与 `rockchip,rv1106-ioc`；
+  DTB 哈希 `d540ab24…` 与既有 20260930.1022 候选内 FIT `fdt` 一致（DTS 仅加注释）；本次未产新镜像、既有候选未覆盖。
+- 详见 `aidlc-docs/evidence/2026-09-30-v015-wifi-sdio-force-jtag.md`。
+
 ## 4. 未验证 / 未决（不得写成已通过）
 
 - **实板验证全部缺失**：候选镜像从未烧录，且**没有 V015 硬件**。eMMC 8 位枚举、分区挂载与读写、启动到应用、
@@ -105,21 +120,18 @@ DTS 事实（`rv1106g-dw-tly-v015.dts`，派生自 `rv1106-luckfox-pico-ultra-ip
   （`vcc_3v3`），这**是软件假设，不是实测结论**。另：8GB eMMC 标称容量与 `6G(rootfs)` 等分区布局的实际可用容量、
   以及 DTS 注释自认沿用的 "V014 256MB DRAM" 假设，都需 V015 实板核对。
 - **无网络首启**：镜像不预置 Wi-Fi 凭据是刻意决定，但"设备端受控配网"流程未验证。
-- **本次复核新发现（代码事实 + 推断，未在 V015 实测）**：本分支**不含** V020 分支上的 `force_jtag_sdmmc` 修复。
-  - 代码事实：`git merge-base --is-ancestor 2e55b494e HEAD` 与 `... 425a63a6b HEAD` 均为**假**（该修复只在 V020 分支）；
-    本分支构建内核 `sysdrv/source/objs_kernel/.config:4232` 为 `# CONFIG_ROCKCHIP_GRF is not set`
-    （`grf.c` 由该符号控制编译，`drivers/soc/rockchip/Makefile`），`System.map` 中 `rockchip_grf` 计数为 0，
-    也没有 `grf.o`；DTS/U-Boot 侧同样没有任何代码去清这一位。
-  - 该修复处理的是 RV1106 GPIO3 IOC `force_jtag_sdmmc`（`ioc_rv1106.h:173`，偏移 `0x02f4`，HIWORD 掩码寄存器，
-    **上电即为 1**）：置位时 GPIO3_A1~A7 引脚组交给 JTAG，SDMMC0 的 4 位数据路径失败（表现为 SBE）。
-  - 推断：V015 的 **Wi-Fi SDIO 恰好就在这个控制器/引脚组上**（`&sdmmc` = `mmc@ffaa0000`，GPIO3 sdmmc0，4 位）。
-    在 V020 上，实测出问题的是同一控制器上的 SD 卡（V020 的 Wi-Fi 在另一控制器）。
-    因此 **V015 的 4 位 SDIO 是否同样受影响，尚未验证**；在实板或上游参考实现核对前，**不得假定 V015 Wi-Fi 可用**。
-  - 待办：上板时优先确认 `devmem` 读 `0xFF5582F4`（GPIO3 IOC + 0x2f4）与 SDIO 4 位枚举结果，再决定是否把
-    `grf.c` 修复与 `CONFIG_ROCKCHIP_GRF` 一并移植到 V015 分支。
+- **V015 4 位 Wi-Fi SDIO 的 force_jtag_sdmmc 风险**：分析与最小移植见 3.4，**仍属未实板验证**。
+  - 代码事实：该位（RV1106 GPIO3 IOC `force_jtag_sdmmc`，偏移 `0x02f4`，HIWORD 掩码，POR 默认 1）在本树 U-Boot/内核均无写入；
+    V015 的 Wi-Fi SDIO 在 SDMMC0/GPIO3_A1..A7、4 位 ⇒ 若 POR 默认确为 1，4 位传输必 SBE（1 位可枚举）。
+  - 推断（高置信，非实测）：V015 上该位启动后为 1、Wi-Fi 4 位不可用。**没有 V015 硬件**，未 devmem、未实测。
+  - 已处理：`grf.c` + V015 fragment + BoardConfig 已移植（3.4），内核构建通过。
+  - 待办：上板时优先 `devmem 0xFF5582F4`（应为 `0x0`）与 Wi-Fi SDIO 4 位枚举/吞吐复核。
+  - 注：旁证（同族旧板 `rv1106g-luckfox-pico-ultra-spi-nand.dts` 同布线、提交 `6831d9024` 自述 "wifi 还是异常"）方向一致但未定位根因，**不作结论**。
 - **旧候选**：`IMAGE/..._20260929.1330_RELEASE_TEST/`（`update.img` 476,359,242 B）仍含 `S91smb`，只可作历史对照，不得交付。
 
-## 5. 本次复核所用命令（全部只读）
+## 5. 复核与构建所用命令
+
+### 5.1 初版只读复核
 
 ```
 git rev-parse --abbrev-ref HEAD / git rev-parse HEAD / git status --short --branch / git rev-parse @{u}
@@ -132,9 +144,20 @@ dtc -I dtb -O dts <boot.img> / dd + dtc 提取 FIT fdt 子镜像
 grep -n CONFIG_ROCKCHIP_GRF sysdrv/source/objs_kernel/.config / grep -c rockchip_grf System.map
 ```
 
+### 5.2 本切片新增命令（构建型，非只读）
+
+```
+./build.sh kernel                                  # 退出码 0；日志 /tmp/dw012-v015-jtag-kernel.log
+grep -n CONFIG_ROCKCHIP_GRF sysdrv/source/objs_kernel/.config     # 4232:CONFIG_ROCKCHIP_GRF=y
+strings sysdrv/source/objs_kernel/drivers/soc/rockchip/grf.o | grep -i jtag
+sha256sum sysdrv/source/objs_kernel/{vmlinux,arch/arm/boot/Image} sysdrv/out/bin/board_uclibc_rv1106/rv1106g-dw-tly-v015.dtb output/image/boot.img
+dtc -I dtb -O dts sysdrv/out/bin/board_uclibc_rv1106/rv1106g-dw-tly-v015.dtb | grep -n "bus-width\|ffaa0000\|ff538000"
+```
+
 ## 6. 本分支证据文件索引
 
-- `aidlc-docs/evidence/2026-09-30-v015-smb-nmb-autostart-disabled.md`（SMB/NMB 关闭；现行结论）
+- `aidlc-docs/evidence/2026-09-30-v015-wifi-sdio-force-jtag.md`（4 位 Wi-Fi SDIO / force_jtag 分析与最小移植；现行结论）
+- `aidlc-docs/evidence/2026-09-30-v015-smb-nmb-autostart-disabled.md`（SMB/NMB 关闭）
 - `aidlc-docs/evidence/2026-09-03-dw-sdk-003-pstore-ramoops.md`、`2026-09-02-csi-i2c4-disabled-root-cause.md`（更早切片，
   随 `main_axiarz` 继承，非 V015 专属）
-- 本文件第 4 节所列接口（eMMC 供电、4 位 Wi-Fi SDIO/force_jtag、实板启动）**尚无证据文件**，属已知缺口。
+- 本文件第 4 节所列其余接口（eMMC 供电签核、实板启动、Wi-Fi/BT 实机）**尚无证据文件**，属已知缺口。

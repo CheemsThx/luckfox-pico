@@ -86,7 +86,10 @@ export RK_UBOOT_DEFCONFIG=luckfox_rv1106_uboot_defconfig
 export RK_KERNEL_DEFCONFIG=luckfox_rv1106_linux_defconfig
 
 # Kernel defconfig fragment
-export RK_KERNEL_DEFCONFIG_FRAGMENT=rv1106-bt.config
+# rv1106-v015.config 打开 CONFIG_ROCKCHIP_GRF，使 grf.c 在 postcore_initcall
+# 阶段清掉 RV1106 GPIO3 SDMMC0 的 force_jtag 占用（V015 的 Wi-Fi SDIO 就跑在
+# 这个控制器/引脚组上）。只加在 V015，共享的 rv1106-bt.config 不改，其他板型不受影响。
+export RK_KERNEL_DEFCONFIG_FRAGMENT="rv1106-bt.config rv1106-v015.config"
 
 # Config sensor IQ files
 # RK_CAMERA_SENSOR_IQFILES format:
