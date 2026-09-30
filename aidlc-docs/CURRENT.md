@@ -21,7 +21,7 @@
 
 ## 2. 本分支承载的板级事实（代码/配置事实，可在本树逐条复核）
 
-本分支相对 `main_axiarz` 只新增 4 个已跟踪文件（`git diff --stat main_axiarz..HEAD`）：
+V015 板级适配涉及下列 4 个源码/配置文件；分支还包含证据、状态和 Claude 规则文件（以 `git diff --name-only main_axiarz..HEAD` 为准）：
 
 | 文件 | 作用 |
 |---|---|
@@ -137,4 +137,4 @@ grep -n CONFIG_ROCKCHIP_GRF sysdrv/source/objs_kernel/.config / grep -c rockchip
 - `aidlc-docs/evidence/2026-09-30-v015-smb-nmb-autostart-disabled.md`（SMB/NMB 关闭；现行结论）
 - `aidlc-docs/evidence/2026-09-03-dw-sdk-003-pstore-ramoops.md`、`2026-09-02-csi-i2c4-disabled-root-cause.md`（更早切片，
   随 `main_axiarz` 继承，非 V015 专属）
-- 本文件第 4 节所列接口（eMMC 供电、8 位 SDIO/force_jtag、实板启动）**尚无证据文件**，属已知缺口。
+- 本文件第 4 节所列接口（eMMC 供电、4 位 Wi-Fi SDIO/force_jtag、实板启动）**尚无证据文件**，属已知缺口。
