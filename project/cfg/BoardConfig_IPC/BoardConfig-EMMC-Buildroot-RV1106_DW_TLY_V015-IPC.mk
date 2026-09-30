@@ -127,8 +127,11 @@ export RK_PRE_BUILD_OEM_SCRIPT=luckfox-buildroot-oem-pre.sh
 # specify post.sh for delete/overlay files
 export RK_PRE_BUILD_USERDATA_SCRIPT=luckfox-userdata-pre.sh
 
-# V015 不使用 SMB/NMB，板级后处理删除 Samba 开机服务入口。
-export RK_POST_BUILD_SCRIPT=dw-tly-v015-disable-smb-post.sh
+# V015 板级后处理：关闭 SMB/NMB 开机自启，并把 rkipc 默认自启改为显式开关。
+# 仅本板选用；共享 Buildroot defconfig 与其他板型 BoardConfig 均不改。
+export RK_POST_BUILD_SCRIPT=dw-tly-v015-post.sh
 
 # declare overlay directory
-export RK_POST_OVERLAY="overlay-luckfox-config overlay-luckfox-buildroot-init overlay-luckfox-buildroot-shadow overlay-luckfox-buildroot-rgb overlay-luckfox-wifibt-firmware"
+# 末尾的 overlay-dw-tly-v015 只含 V015 专属 /etc/init.d/S21appinit（rkipc 启动门控），
+# 置于末位以确保覆盖共享 build.sh 生成的那一份。
+export RK_POST_OVERLAY="overlay-luckfox-config overlay-luckfox-buildroot-init overlay-luckfox-buildroot-shadow overlay-luckfox-buildroot-rgb overlay-luckfox-wifibt-firmware overlay-dw-tly-v015"

@@ -1,0 +1,56 @@
+#!/bin/sh
+# DW-TLY-V015：rkipc 默认不自启；置位 /userdata/.rkipc-enable 后自启。
+#
+# 为什么在启动脚本这一层做门控：
+#   共享 `project/build.sh:1488-1505` 的 __PACKAGE_OEM 会给每个板型生成同一份
+#   /etc/init.d/S21appinit，其 start) 直接执行 `sh /oem/usr/bin/RkLunch.sh`，
+#   进而无条件拉起 rkipc（rv1106_ipc/RkLunch.sh 的 `rkipc -a ... &`）。
+#   该生成器与 rv1106_ipc/ 下的 RkLunch 都被本分支之外的其他板型共用，
+#   不能改；V015 只在 post_overlay 阶段用本文件覆盖 S21appinit。
+#
+# 持久开关放在 /userdata（ext4、可写、reflash 后仍保留）：
+#   打开：touch /userdata/.rkipc-enable  ，重启生效
+#   关闭：rm -f /userdata/.rkipc-enable  ，重启生效
+#
+# 注意：本文件在镜像里位于 rootfs 的 /etc/init.d/。S21appinit 排在 S20linkmount
+#   之后，启动到此处时 /userdata 已挂载，故不做“等待挂载”。
+
+RKIPC_ENABLE_FLAG=/userdata/.rkipc-enable
+
+rkipc_enabled() {
+	# 只认普通文件。必须排除符号链接：`[ -f ]` 会跟随链接，若允许链接，
+	# 任何指向常规文件的链接都会误开 rkipc。目录天然被 `[ -f ]` 排除。
+	[ -f "$RKIPC_ENABLE_FLAG" ] && [ ! -L "$RKIPC_ENABLE_FLAG" ]
+}
+
+start() {
+	if ! rkipc_enabled; then
+		echo "dw-tly-v015: rkipc autostart disabled; touch /userdata/.rkipc-enable and reboot to enable"
+		return 0
+	fi
+	echo "dw-tly-v015: rkipc autostart enabled by /userdata/.rkipc-enable"
+	sh /oem/usr/bin/RkLunch.sh
+}
+
+stop() {
+	sh /oem/usr/bin/RkLunch-stop.sh
+}
+
+case "$1" in
+	start)
+		start
+		;;
+	stop)
+		stop
+		;;
+	restart)
+		stop
+		start
+		;;
+	*)
+		echo "Usage: $0 {start|stop|restart}" >&2
+		exit 1
+		;;
+esac
+
+exit $?
