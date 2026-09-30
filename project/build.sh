@@ -637,10 +637,24 @@ function build_check() {
 
 function build_app() {
 	if [ "$RK_ENABLE_WIFI" = "y" ]; then
-		echo "Set Wifi SSID and PASSWD"
-		check_config LF_WIFI_PSK LF_WIFI_SSID || return 0
-		touch $WIFI_NEW_CONF
-		cat >$WIFI_NEW_CONF <<EOF
+		# 清理上次构建可能残留的临时文件；真正防止旧目标配置残留的是各分支写入新基础文件后 mv 覆盖
+		rm -f $WIFI_NEW_CONF
+		# 凭据只判断是否存在，不在日志/证据展示取值；只提供一项时直接失败，不静默出半套配置
+		if [ -z "$LF_WIFI_SSID" ] && [ -z "$LF_WIFI_PSK" ]; then
+			echo "No Wifi SSID and PASSWD, generate a network-less wpa_supplicant.conf"
+			touch $WIFI_NEW_CONF
+			cat >$WIFI_NEW_CONF <<EOF
+ctrl_interface=/var/run/wpa_supplicant
+ap_scan=1
+update_config=1
+EOF
+		elif [ -z "$LF_WIFI_SSID" ] || [ -z "$LF_WIFI_PSK" ]; then
+			echo "Error: LF_WIFI_SSID and LF_WIFI_PSK must be set together" >&2
+			return 1
+		else
+			echo "Set Wifi SSID and PASSWD"
+			touch $WIFI_NEW_CONF
+			cat >$WIFI_NEW_CONF <<EOF
 ctrl_interface=/var/run/wpa_supplicant
 ap_scan=1
 update_config=1
@@ -651,6 +665,8 @@ network={
 	key_mgmt=WPA-PSK
 }
 EOF
+		fi
+		# 只有生成成功才替换目标配置，失败时保留原文件
 		mv $WIFI_NEW_CONF $WIFI_CONF
 	fi
 
