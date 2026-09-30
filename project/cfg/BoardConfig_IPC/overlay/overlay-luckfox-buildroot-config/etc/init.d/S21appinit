@@ -1,0 +1,64 @@
+#!/bin/sh
+# DW-TLY-V020：rkipc 默认不自启；置位 /userdata/.rkipc-enable 后自启。
+#
+# 为什么在启动脚本这一层做门控、而不是删掉/改名 S21appinit：
+#   rootfs 的 /etc/init.d/rcS（Buildroot 生成，实际内容）用
+#       for i in /etc/init.d/S??* ;do
+#   枚举启动脚本。`S??*` 只要求前三个字符是 S + 两位数字，后缀任意，
+#   因此 S21appinit.disabled **仍然匹配**，改名并不能关闭自启；rcS 只跳过
+#   目录与悬空链接（[ ! -f "$i" ] && continue），普通文件一律 $i start。
+#   V020 自己的一个候选镜像（20260930.2054）正是这样留下 S21appinit.disabled，
+#   rkipc 依旧开机启动。正确做法是保留 S21appinit 这个名字，在 start 里加判断。
+#
+# 持久开关放在 /userdata（本板 UBI	volume，可写、刷写 rootfs 后仍保留）：
+#   打开：touch /userdata/.rkipc-enable  ，重启生效
+#   关闭：rm -f /userdata/.rkipc-enable  ，重启生效
+#
+# 与本文件同名的共享生成器产物来自 project/build.sh 的 __PACKAGE_OEM，
+# 只含 `sh /oem/usr/bin/RkLunch.sh`；V020 板级 overlay overlay-luckfox-buildroot-config
+# 在 RK_POST_OVERLAY 中排在最后，用本文件覆盖它（post_overlay 在 rootfs 成像前）。
+#
+# 时序：rcS 按字典序启动，S20linkmount 先挂好 /userdata（挂不上则该脚本
+#   `return 1`，rcS 不因非零退出而中止，继续跑 S21appinit），随后 S20pstore、
+#   再到本脚本。因此这里无需再等挂载；实在拿不到标志文件就按“关闭”处理，
+#   这与设计意图（默认不出流）一致。
+
+RKIPC_ENABLE_FLAG=/userdata/.rkipc-enable
+
+rkipc_enabled() {
+	# 只认普通文件。必须排除符号链接：`[ -f ]` 会跟随链接，若允许链接，
+	# 任何指向常规文件的链接都会误开 rkipc。目录天然被 `[ -f ]` 排除。
+	[ -f "$RKIPC_ENABLE_FLAG" ] && [ ! -L "$RKIPC_ENABLE_FLAG" ]
+}
+
+start() {
+	if ! rkipc_enabled; then
+		echo "dw-tly-v020: rkipc autostart disabled; touch /userdata/.rkipc-enable and reboot to enable (manual: sh /oem/usr/bin/RkLunch.sh)"
+		return 0
+	fi
+	echo "dw-tly-v020: rkipc autostart enabled by /userdata/.rkipc-enable"
+	sh /oem/usr/bin/RkLunch.sh
+}
+
+stop() {
+	sh /oem/usr/bin/RkLunch-stop.sh
+}
+
+case "$1" in
+	start)
+		start
+		;;
+	stop)
+		stop
+		;;
+	restart)
+		stop
+		start
+		;;
+	*)
+		echo "Usage: $0 {start|stop|restart}" >&2
+		exit 1
+		;;
+esac
+
+exit $?

@@ -77,27 +77,46 @@ if [ "${RK_KERNEL_DTS}" = "rv1106g-dw-tly-v020.dts" ]; then
 fi
 
 # --- V020 不默认启动 rkipc ---
-# rkipc 由 rootfs 的 /etc/init.d/S21appinit 在开机 start 时拉起
-# （S21appinit 在 build.sh 的 __PACKAGE_OEM 里生成，内容固定为
-# `sh /oem/usr/bin/RkLunch.sh`）。默认关闭的做法是把入口脚本改名加 `.disabled`
-# 后缀，保留文件与内容，便于现场/恢复脚本原地改回。
-# 因为 post 在 post_overlay 之前运行，而各 overlay 均不含 S21appinit，
-# 改名不会被后续步骤撤销。
-#
-# 恢复开机自动启动（板端，root 执行）：
-#   mv /etc/init.d/S21appinit.disabled /etc/init.d/S21appinit && sync
-# 立即手动启动（不重启）：
-#   /oem/usr/bin/RkLunch.sh            # 已跑过同目录 rcS，重复执行只会重跑 rkipc
-# 如需改回“默认自动启动”，在板端 `touch /etc/init.d/S21appinit.enable` 后由
-# /etc/init.d/S20pstore 在启动时自动还原（该 overlay 属本板，见 S20pstore 末尾）。
+# 门控由 V020 专属覆盖件 overlay-luckfox-buildroot-config/etc/init.d/S21appinit
+# 经 RK_POST_OVERLAY 覆盖进 rootfs（见 BoardConfig 的 RK_POST_OVERLAY 注释与
+# S20linkmount/S21appinit 的启动顺序）。这里只做构建期断言：
+#   1) 覆盖件存在且带 RkLunch.sh，覆盖确实发生在 post_overlay 之后；
+#   2) 覆盖件保留 S21appinit 文件名，且产物里没有会被 rcS 的 S??* 误匹配的
+#      S21appinit.disabled 残留。
+# 为什么不能用“改名加 .disabled”关闭自启：rootfs 的 /etc/init.d/rcS 用
+#   `for i in /etc/init.d/S??* ;do`
+# 枚举（本分支已构建的 output/out/rootfs_uclibc_rv1106/etc/init.d/rcS 第 7 行），
+# `S??*` 只要求 S + 两位数字，S21appinit.disabled **仍然匹配**，且 rcS 只跳过
+# 目录/悬空链接（[ ! -f "$i" ] && continue），普通文件照样 `$i start`。
+# 先前 20260930.2054 候选镜像正是因此仍然开机启动 rkipc；改名为不生效的死路。
 if [ "${RK_KERNEL_DTS}" = "rv1106g-dw-tly-v020.dts" ]; then
-	if [ -f "${ROOTFS}/etc/init.d/S21appinit" ]; then
-		mv "${ROOTFS}/etc/init.d/S21appinit" "${ROOTFS}/etc/init.d/S21appinit.disabled"
-		echo "luckfox-buildroot-ble-fix-post: V020 rkipc autostart disabled (S21appinit.disabled)"
+	# 注意脚本末尾会执行到此处，且本脚本此前若有失败不得静默放过。
+	gate_src="$(dirname "$(realpath "$0")")/overlay/overlay-luckfox-buildroot-config/etc/init.d/S21appinit"
+	gate_dst="${ROOTFS}/etc/init.d/S21appinit"
+	gate_bad="${ROOTFS}/etc/init.d/S21appinit.disabled"
+
+	if [ ! -f "$gate_src" ]; then
+		echo "luckfox-buildroot-ble-fix-post: ERROR V020 rkipc gate overlay missing: $gate_src" >&2
+		exit 1
 	fi
+	mkdir -p "${ROOTFS}/etc/init.d"
+	install -m 0755 "$gate_src" "$gate_dst"
+	grep -q 'RkLunch\.sh' "$gate_dst" ||
+		{ echo "luckfox-buildroot-ble-fix-post: ERROR V020 rkipc gate lacks RkLunch.sh" >&2; exit 1; }
+	grep -q '\.rkipc-enable' "$gate_dst" ||
+		{ echo "luckfox-buildroot-ble-fix-post: ERROR V020 rkipc gate lacks /userdata/.rkipc-enable" >&2; exit 1; }
+	if [ -e "$gate_bad" ]; then
+		echo "luckfox-buildroot-ble-fix-post: ERROR stale ${gate_bad} matches rcS S??* glob" >&2
+		exit 1
+	fi
+	echo "luckfox-buildroot-ble-fix-post: V020 rkipc autostart gated by /userdata/.rkipc-enable (S21appinit kept)"
 fi
+
+# 说明：覆盖件由 post_overlay 在 __RUN_POST_BUILD_SCRIPT（本脚本）之后写入，
+# 故此处只校验源覆盖件；对成像结果的断言（rcS glob 不会误匹配、门控内容确实
+# 在 rootfs 内）见 aidlc-docs/evidence/ 中本次切片的包内静态核验记录。
 
 echo "luckfox-buildroot-ble-fix-post: removed pulseaudio-system.conf, wrote /etc/bluetooth/main.conf"
 if [ "${RK_KERNEL_DTS}" = "rv1106g-dw-tly-v020.dts" ]; then
-	echo "luckfox-buildroot-ble-fix-post: V020 post done (freetype restored, rkipc autostart off)"
+	echo "luckfox-buildroot-ble-fix-post: V020 post done (freetype restored, rkipc autostart gated)"
 fi

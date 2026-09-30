@@ -112,4 +112,9 @@ export RK_POST_BUILD_SCRIPT=luckfox-buildroot-ble-fix-post.sh
 # [V020] 原样沿用。其中 overlay-luckfox-buildroot-rgb 在本板是惰性的：
 # 它的 S25backlight 只在 /oem/usr/ko/pwm_bl.ko 存在时 insmod，而 DTS 里 backlight/pwm1
 # 都是 disabled，驱动无处绑定。保留是为了与 V014 少一处差异；日后可去掉。
-export RK_POST_OVERLAY="overlay-luckfox-config overlay-luckfox-buildroot-init overlay-luckfox-buildroot-shadow overlay-luckfox-buildroot-rgb overlay-luckfox-wifibt-firmware"
+# [V020] 末尾的 overlay-luckfox-buildroot-config 承载 V020 专属
+# /etc/init.d/S21appinit（rkipc 启动门控）。post_overlay 按本列表顺序 rsync
+# 覆盖，故本 overlay 放在最后，确保覆盖 project/build.sh 的 __PACKAGE_OEM
+# 生成的那一份 S21appinit（生成 → __RUN_POST_BUILD_SCRIPT → post_overlay →
+# rootfs 成像，覆盖发生在成像之前）。
+export RK_POST_OVERLAY="overlay-luckfox-config overlay-luckfox-buildroot-init overlay-luckfox-buildroot-shadow overlay-luckfox-buildroot-rgb overlay-luckfox-wifibt-firmware overlay-luckfox-buildroot-config"
