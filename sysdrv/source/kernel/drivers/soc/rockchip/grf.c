@@ -291,8 +291,9 @@ static const struct rockchip_grf_info rv1126_grf __initconst = {
  * “默认关闭 force_jtag”（U-Boot 侧对应 CONFIG_ROCKCHIP_DISABLE_FORCE_JTAG）。
  *
  * 边界：清位只影响 GPIO3_A1..A7 这组 SDMMC0 脚（数据手册球号 11/12/14/15/16/17/18
- * 依次为 SDMMC0_DET/D1/D0/CLK/CMD/D3/D2）。按 V015 网表（应用仓库 SRC-HW
- * 2026-09-29 条目，SHA-256 4b6efd752a7859aa…）这 7 个网络只到 Wi-Fi 模组 U4
+ * 依次为 SDMMC0_DET/D1/D0/CLK/CMD/D3/D2）。按 V015 网表（应用仓库来源编号
+ * SRC-HW-ENET-20260929，原件 Netlist_DW-TLY-V015_2026-09-29.enet，
+ * SHA-256 4b6efd752a7859aa…）这 7 个网络只到 Wi-Fi 模组 U4
  * （CLK/CMD/D0-D3，模组侧 17/16/18/19/14/15）、CLK 上的 R4 22Ω 串阻和 DET 上的
  * R41 10k 下拉，不承载其他功能；DET 并不到模组，本板 non-removable 也不做插卡
  * 检测。整张网表没有任何 JTAG 网络或调试连接器（JTAG 复用球 GPIO1_B2/B3 亦空接），

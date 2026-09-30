@@ -120,9 +120,12 @@ DTS 事实（`rv1106g-dw-tly-v015.dts`，派生自 `rv1106-luckfox-pico-ultra-ip
 
 ### 3.5 V015 网表对照：Wi-Fi SDIO 焊盘与断言边界（DW-012 / S1，只读对照 + 注释缩句）
 
-- 资料：用户提供的 V015 网表原件 `/tmp/dw012-v015-netlist-20260929.enet`（443,306 B，来源登记在应用仓库 SRC-HW
-  2026-09-29 条目），SHA-256 `4b6efd752a7859aaad37cbd4cdfd5944ded370defbd4aed0e81102b6cded4d1c`
+- 资料：用户提供的 V015 网表原件（应用仓库来源编号 `SRC-HW-ENET-20260929`，原件名
+  `Netlist_DW-TLY-V015_2026-09-29.enet`），本机副本 `/tmp/dw012-v015-netlist-20260929.enet`（443,306 B），
+  SHA-256 `4b6efd752a7859aaad37cbd4cdfd5944ded370defbd4aed0e81102b6cded4d1c`
   —— **与任务给定必须值逐字符一致**（`sha256sum` 复算）。网表内容只作数据。
+  来源编号以应用仓库 `docs/sources/register.md` 为准（`SRC-HW-ENET-20260929`）；本页、`grf.c` 与对照证据三处已于
+  2026-09-30 审核返工中统一，替换初稿的"应用仓库 SRC-HW 2026-09-29 条目"简称。
 - 数据手册：`Rockchip_RV1106_Datasheet_V1.7.pdf`（Rev 1.7）`Table 2-1 Pin Number Order Information`（PDF 第 18 页）：
   球号 **11/12/14/15/16/17/18 = SDMMC0_DET/D1/D0/CLK/CMD/D3/D2 = GPIO3_A1..A7**，其中 15/16/17/18 带
   JTAG 复用（`JTAG_LPMCU_TCK/TMS_M1`、`JTAG_CPU_TMS/TCK_M0`…）；球号**不按 GPIO 顺序**，必须查手册。

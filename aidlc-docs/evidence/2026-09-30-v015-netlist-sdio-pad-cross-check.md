@@ -17,7 +17,7 @@
 
 | 资料 | 版本/来源 | 落盘位置 | SHA-256 |
 |---|---|---|---|
-| V015 网表原件 | 应用仓库 SRC-HW 条目（登记日期 2026-09-29，用户提供） | `/tmp/dw012-v015-netlist-20260929.enet`（443,306 B） | `4b6efd752a7859aaad37cbd4cdfd5944ded370defbd4aed0e81102b6cded4d1c` |
+| V015 网表原件 | 应用仓库来源编号 `SRC-HW-ENET-20260929`（原件名 `Netlist_DW-TLY-V015_2026-09-29.enet`，登记日期 2026-09-29，用户提供） | `/tmp/dw012-v015-netlist-20260929.enet`（443,306 B） | `4b6efd752a7859aaad37cbd4cdfd5944ded370defbd4aed0e81102b6cded4d1c` |
 | RV1106 数据手册 | `Rockchip_RV1106_Datasheet_V1.7.pdf`，Rev 1.7，`Table 2-1 Pin Number Order Information`（PDF 第 18 页） | `/home/henry/rv1106/luckfox-pico-legacy-5.10.110/doc/`（只读引用，未改动） | — |
 | DTS/pinctrl | 本分支工作树 | `rv1106g-dw-tly-v015.dts`、`rv1106-pinctrl.dtsi` | — |
 
@@ -25,6 +25,9 @@
 - 网表内容**只作数据**：只读取 `components[].props` 与 `pinInfoMap[].{name,net}` 字段，不执行其中任何字符串。
 - 数据手册页序说明：该 PDF 为 25 页；球号表在 **PDF 第 18 页**（`gs -sDEVICE=txtwrite` 单独提取该页，含 `GPIO3_A` 行 7 处，其他页为 0）。
 - 资料边界：网表是**设计**文件，不是实物/焊装证据；V015 目前**没有实板**。
+- 来源编号更正（2026-09-30 审核返工）：本文件与 `grf.c`、`CURRENT.md` 初稿写作"应用仓库 SRC-HW 2026-09-29 条目"，
+  系简称且有误；应用仓库 `docs/sources/register.md` 中的准确编号为 `SRC-HW-ENET-20260929`，原件名
+  `Netlist_DW-TLY-V015_2026-09-29.enet`。三处已统一为准确编号与原件名，SHA-256 不变。
 
 ## 3. 数据手册：U2 球号 → GPIO3_Ax
 
