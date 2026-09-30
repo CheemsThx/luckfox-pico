@@ -159,15 +159,9 @@
 		regulator-max-microvolt = <3300000>;
 	};
 
-	vdd_arm: vdd-arm {
-		compatible = "regulator-fixed";
-		regulator-name = "vdd_arm";
-		regulator-min-microvolt = <900000>;
-		regulator-max-microvolt = <900000>;
-		regulator-always-on;
-
-		regulator-boot-on;
-	};
+	/* 本板没有 vdd_arm（CPU 电源）虚拟 fixed regulator：
+	 * VDD_0V9 由 U9(RY3430)+R26/R27 硬件固定分压，无软件控制路径，
+	 * 且 CPU 不做 DVFS（见文件末尾 CPU 动态调频撤销说明）。 */
 
 	leds: leds {
 		compatible = "gpio-leds";
@@ -220,62 +214,46 @@
 	status = "disabled";
 };
 
-&cpu0 {
-	cpu-supply = <&vdd_arm>;
-};
-
-/************************ CPU DVFS / OPP 电压限定 *************************
- * V020 的 CPU 电源是固定 0.9V：U9(RY3430) 的 FB 由 R26=10k(VDD_0V9→FB)、
- * R27=20k(FB→GND) 固定分压，L3 输出 VDD_0V9；网表上没有 CPU 侧 PWM/I2C
- * 到 U9 的控制路径。该轨同时接 RV1106 CPU_DVDD(pin115)、DVDD_1..7、
- * PMU_DVDD0V9、OSC_PLL_DVDD，因此**不能**随 CPU 频率抬高。
+/********* CPU 动态调频/调压：本板不需要，整体撤销（无软件控制路径）*********
+ * 硬件事实：V020 的 CPU 电源 VDD_0V9 由 U9(RY3430) + R26=10k(VDD_0V9→FB) /
+ * R27=20k(FB→GND) 固定分压产生 0.9V，网表上没有 CPU 侧 PWM/I2C 到 U9 的控制
+ * 路径；该轨同时接 RV1106 CPU_DVDD(pin115)、DVDD_1..7、PMU_DVDD0V9、
+ * OSC_PLL_DVDD。即 CPU 电压既不可调、也不应随频率变化。
  *
- * 共用 rv1106.dtsi 的 cpu0-opp-table 是按可调 rail 设计的：1.416GHz 额定
- * 925mV、1.512GHz 975mV、1.608GHz 1000mV，均高于 0.9V。在这块板上运行时
- * 会以 -EINVAL 反复失败，来源有三处：
- *   1) rockchip_pvtpll_calibrate_opp() 在首个 u_volt>0.9V 的 OPP 上
- *      regulator_set_voltage 失败（rockchip_pvtpll_set_volt: -22）并中止校准；
- *   2) rockchip_system_monitor 低温补偿（rockchip,low-temp=10℃）会把 1.608GHz
- *      档的 (min,target,max) 抬成 (1000000,1000000,1000000)，固定 rail 无法
- *      满足（drivers/opp/core.c _set_opp_voltage: -22）；
- *   3) 上述失败使 cpu_opp_helper/__target_index 整个换档失败，日志刷屏。
+ * 撤销项与理由（本次为对 75a002c9「只删高压 OPP」的纠正：需求是本板不要
+ * CPU 动态调频，而不是在固定轨上继续调频）：
+ *   1) cpu0 的 operating-points-v2：共用 rv1106.dtsi 的 cpu0-opp-table 是按
+ *      可调 rail 设计的（1.416G 额定 925mV / 1.512G 975mV / 1.608G 1000mV，
+ *      均 >0.9V）。在固定 0.9V 轨上任何一次 set_voltage 都无法满足，运行期会
+ *      持续报 -EINVAL（rockchip_pvtpll_set_volt、_set_opp_voltage、
+ *      cpufreq __target_index）。本板不需要调频，直接去掉绑定。
+ *   2) cpu0 的 cpu-supply：去掉后 drivers/cpufreq/rockchip-cpufreq.c 的
+ *      rockchip_cpufreq_cluster_init() 在
+ *      `of_find_property(dev->of_node, "cpu-supply", NULL)` 处返回 -ENOENT，
+ *      rockchip_cpufreq_driver_init() 随即放弃注册 cpufreq-dt。内核配置层面
+ *      另有 rv1106-v020.config 关掉 CONFIG_CPU_FREQ 收口（见该文件注释）。
+ *   3) 本板的 vdd_arm 虚拟 fixed regulator 与 cpu0-opp-table 节点：对固定硬件
+ *      轨没有软件控制意义，一并删除（前者已在上方删除，后者见下方 delete-node）。
  *
- * 处理：只保留额定电压 ≤0.9V 的档（≤1.296GHz，额定 875mV），并把保留档的
- * target/min/max 全部钉在 0.9V，使固定的 vdd_arm 与 OPP 请求一致；额定电压
- * 高于 0.9V 的档（≥1.416GHz）直接删除。不把固定 regulator 伪装成可调，也不
- * 删除 cpu-supply。
- * 注意：1.296GHz 是额定 ≤900mV 的最高档（875mV）；若日后实测该档在 0.9V 下
- * 不稳，应继续下调上限到 1.2GHz（额定 850mV）。
+ * 频率：本板不指定任何运行频率。去掉 cpufreq 后内核不再调用 clk_set_rate(ARMCLK)
+ * 换档；ARMCLK 保持 bootloader 的默认配置（U-Boot APLL_HZ=1104MHz，见
+ * u-boot arch/arm/include/asm/arch-rockchip/cru_rv1106.h；与通用 rv1106.dtsi
+ * cru 节点的 assigned-clock-rates ARMCLK=1104MHz 一致）。
+ *
+ * 热保护保留，不受本改动影响：
+ *   - tsadc 仍在（rv1106.dtsi tsadc@ff3c8000，rockchip,hw-tshut-temp=120℃、
+ *     rockchip,hw-tshut-mode=0:CRU），超温直接硬件复位 SoC，与 cpufreq 无关；
+ *   - soc-thermal 的 critical trip 仍在（115℃，见 rv1106.dtsi soc-crit），由
+ *     thermal core 直接处理（orderly_poweroff + emergency poweroff），不经过
+ *     cpufreq cooling（drivers/thermal/thermal_core.c handle_critical_trips）；
+ *   - CONFIG_THERMAL / CONFIG_ROCKCHIP_THERMAL 未改。
  */
-&cpu0_opp_table {
-	/* 与固定 0.9V 一致，禁止低温补偿把 OPP 电压抬到 >0.9V */
-	rockchip,low-temp-min-volt = <900000>;
-
-	/* 额定电压 >0.9V 的高压档，在 0.9V 下不可运行，删除 */
-	/delete-node/ opp-1416000000;
-	/delete-node/ opp-1512000000;
-	/delete-node/ opp-1608000000;
-
-	/* 保留档（≤1.296GHz）：target/min/max 全部 = 固定 rail 0.9V */
-	opp-408000000 {
-		opp-microvolt = <900000 900000 900000>;
-	};
-	opp-600000000 {
-		opp-microvolt = <900000 900000 900000>;
-	};
-	opp-816000000 {
-		opp-microvolt = <900000 900000 900000>;
-	};
-	opp-1104000000 {
-		opp-microvolt = <900000 900000 900000>;
-	};
-	opp-1200000000 {
-		opp-microvolt = <900000 900000 900000>;
-	};
-	opp-1296000000 {
-		opp-microvolt = <900000 900000 900000>;
-	};
+&cpu0 {
+	/delete-property/ operating-points-v2;
+	/delete-property/ cpu-supply;
 };
+
+/delete-node/ &cpu0_opp_table;
 
 /*************************** CSI *********************************/
 &csi2_dphy_hw {
