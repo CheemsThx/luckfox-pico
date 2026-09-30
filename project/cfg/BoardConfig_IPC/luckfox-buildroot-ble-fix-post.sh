@@ -37,4 +37,11 @@ EOF
 	echo "luckfox-buildroot-ble-fix-post: USB gadget S15 early start"
 fi
 
+# V020 的视频、SD 本地录像和传感器业务不使用 SMB/NMB 文件共享。
+# 仅在此板的镜像中移除开机入口；共享脚本服务的 V014 保持原状。
+if [ "${RK_KERNEL_DTS}" = "rv1106g-dw-tly-v020.dts" ]; then
+	rm -f "${ROOTFS}/etc/init.d/S91smb"
+	echo "luckfox-buildroot-ble-fix-post: V020 SMB/NMB autostart disabled"
+fi
+
 echo "luckfox-buildroot-ble-fix-post: removed pulseaudio-system.conf, wrote /etc/bluetooth/main.conf"
