@@ -1,15 +1,18 @@
 # DW-012 当前状态快照（SDK 仓 / `codex/dw-012-v015-emmc-adaptation`）
 
 - 生成日期：2026-09-30（初版为只读复核；随后按 DW-012 / S1 切片更新：网表对照与注释缩句、CPUFreq 关闭、完整 `allsave` 构建与新候选静态核验）
-- 最近更新：2026-09-30 深夜（第二轮）—— 在 `aa2fffdb9`（修复无凭据时 `build_app` 被跳过）上重跑 `check`+`allsave`，
-  新候选 `20260930.2013`（`90e77d72…`）取代 `2b251253…`（20260930.1950）与 `2512e210…`（20260930.1656）；
-  该候选的 **Wi-Fi 用户态在 rootfs**（`rkwifi_server`/`wpa_supplicant`/`hostapd`/`librkwifibt.so` + 无 network 块的 `wpa_supplicant.conf`），
-  **内核驱动/固件在 oem**（`/usr/ko/aic8800_*.ko` 等）——两侧齐备，但用户态四项**并非**在 oem 各有同名文件
+- 最近更新：2026-09-30 深夜（第三轮）—— 在 `b1998ddfe`（rkipc 默认不自启门控）上重跑 `check`+`allsave`，
+  新候选 `20260930.2056`（`163abefa…`）取代 `90e77d72…`（20260930.2013）；
+  本版**唯一实质变化**是 rootfs 内 rkipc 启动门控（`/etc/init.d/S21appinit` 换为带 `/userdata/.rkipc-enable` 的
+  V015 覆盖件），**内核与 DTB 逐字节未变**（FIT `fdt` `e3b00deb…` / `kernel` `c3d6b6c9…` 与上一候选相同）。
+  另新增供用户自行烧录的 Windows 交付目录（`update.img` + 中文说明 + `SHA256SUMS`，复制后 hash 已复核）。
+- 说明（澄清）：`libfreetype.so.6` 缺失报错来自 **V020 NAND** 启动日志，与 V015 无关；本候选 rootfs 的
+  freetype 与 rkipc 全依赖闭包（10 个直接 + 6 个二级）已逐件复核齐备（见 §3.2 与 2056 证据 §6）。
 - 仓库与工作树：`/home/henry/rv1106/luckfox-pico-v015-main-axiarz`（`git worktree list` 实测，主仓为 `/home/henry/rv1106/luckfox-pico`）
 - 分支：`codex/dw-012-v015-emmc-adaptation`
 - 起点/HEAD（本切片改动前）：`077b56b3d1dbc906c36d259f9a2f3e10e9370ae4`（"限制 Claude 工作切片不得写入仓库外记忆"）
 - 工作区：本切片开始与结束时均无未提交脏文件；本分支**无 upstream**（`git rev-parse @{u}` → `fatal: no upstream configured`）
-- 相对本树基线 `main_axiarz`（`7b9a33dc7`）领先 4 个提交（本切片提交另计）
+- 相对本树基线 `main_axiarz`（`7b9a33dc7`）领先 5 个提交（本切片提交另计）
 - 本文件**不是**验收结论，也不是交付说明或烧录授权；只登记当前现状、已验证项、未验证项与已知证据缺口
 
 ## 1. 边界：V015 eMMC 量产候选 ≠ V020 NAND 验证板
@@ -29,8 +32,9 @@ V015 板级适配涉及下列源码/配置文件；分支还包含证据、状�
 
 | 文件 | 作用 |
 |---|---|
-| `project/cfg/BoardConfig_IPC/BoardConfig-EMMC-Buildroot-RV1106_DW_TLY_V015-IPC.mk` | V015 eMMC 板级配置（含内核 fragment 挂接） |
-| `project/cfg/BoardConfig_IPC/dw-tly-v015-disable-smb-post.sh` | V015 专属 rootfs 后处理（关闭 Samba 开机自启） |
+| `project/cfg/BoardConfig_IPC/BoardConfig-EMMC-Buildroot-RV1106_DW_TLY_V015-IPC.mk` | V015 eMMC 板级配置（含内核 fragment 挂接、`RK_POST_OVERLAY` 末位的 V015 overlay） |
+| `project/cfg/BoardConfig_IPC/dw-tly-v015-post.sh` | V015 专属 rootfs 后处理：关 Samba 开机自启 + 换装 rkipc 启动门控（取代旧 `dw-tly-v015-disable-smb-post.sh`） |
+| `project/cfg/BoardConfig_IPC/overlay/overlay-dw-tly-v015/etc/init.d/S21appinit` | V015 专属启动脚本：rkipc 默认不自启，`/userdata/.rkipc-enable` 为持久开关 |
 | `sysdrv/source/kernel/arch/arm/boot/dts/rv1106g-dw-tly-v015.dts` | V015 顶层 DTS（`model = "Dongwei DW-TLY-V015 eMMC"`） |
 | `sysdrv/source/kernel/arch/arm/boot/dts/Makefile` | 注册 `rv1106g-dw-tly-v015.dtb`（Makefile:987） |
 | `sysdrv/source/kernel/arch/arm/configs/rv1106-v015.config`（3.4 新增） | V015 专属内核 fragment：`CONFIG_ROCKCHIP_GRF=y` |
@@ -61,55 +65,71 @@ DTS 事实（`rv1106g-dw-tly-v015.dts`，派生自 `rv1106-luckfox-pico-ultra-ip
 
 ## 3. 已验证（截至本 HEAD 可复现；**不含任何实板结论**）
 
-### 3.1 SMB/NMB 开机服务关闭（DW-012 / S1）
+### 3.1 SMB/NMB 开机服务关闭 + rkipc 默认不自启门控（DW-012 / S1）
 
-- 实现：`project/cfg/BoardConfig_IPC/dw-tly-v015-disable-smb-post.sh` —— `rm -f "${rootfs}/etc/init.d/S91smb"`；
-  仅 V015 BoardConfig 第 128 行 `RK_POST_BUILD_SCRIPT=dw-tly-v015-disable-smb-post.sh` 选用，**共享 Buildroot defconfig 未改**，
-  其他板型不受影响。Samba 二进制仍随包，关闭的只是开机自动启动。
-- 生效顺序（`build.sh`）：`__RUN_POST_BUILD_SCRIPT`（:2579）→ `post_overlay`（:2580）→ `build_mkimg $GLOBAL_ROOT_FILESYSTEM_NAME`（:2593）
-  生成 `rootfs.img`。删除发生在 rootfs 成像**之前**；V015 的 5 个 `RK_POST_OVERLAY` 目录内均无 `S91smb`（`grep -rl` 为空），
-  后续 overlay 不会把它加回。
-- 本次独立复核（只读）：
-  - 打包源目录 `output/out/rootfs_uclibc_rv1106/etc/init.d/` 中**无** `S91smb`（`S20linkmount`、`S20pstore` 等在）。
-  - `debugfs -R "stat /etc/init.d/S91smb"` 对**候选** `IMAGES/rootfs.img` → `File not found`；`stat` 脚本可正常列出，
-    同一镜像内 `/usr/sbin/smbd` inode 存在（二进制保留）。
-  - 同一命令对**上一版**候选 `IMAGE/..._20260929.1330_RELEASE_TEST/IMAGES/rootfs.img` → `S91smb` inode 4469 **存在**：
-    即 `20260929.1330` 候选仍会开机拉起 Samba，**已被 `20260930.1022` 取代，不得交付**。
-  - 构建日志 `/tmp/dw012-v015-smb-off-allsave.log`（171,621 B，mtime 2026-09-30 10:22）第 1745 行含
-    `dw-tly-v015-disable-smb-post: SMB/NMB autostart disabled`，第 1996 行 `Running build_allsave succeeded.`。
-- 完整推导与首次记录见 `aidlc-docs/evidence/2026-09-30-v015-smb-nmb-autostart-disabled.md`。
+- 实现合并在一个 V015 专属后处理 `project/cfg/BoardConfig_IPC/dw-tly-v015-post.sh`（取代旧
+  `dw-tly-v015-disable-smb-post.sh`，后者功能并入）：
+  1. `rm -f "${rootfs}/etc/init.d/S91smb"` —— 关闭 Samba 开机自启（二进制仍随包）；
+  2. 用 V015 专属覆盖件 `overlay/overlay-dw-tly-v015/etc/init.d/S21appinit` 换掉共享 `build.sh`
+     生成的那份，使 **rkipc 默认不自启**，仅在 `/userdata/.rkipc-enable` 存在时自启。
+- 仅 V015 BoardConfig 第 130 行 `RK_POST_BUILD_SCRIPT=dw-tly-v015-post.sh` 选用，**共享 Buildroot defconfig 未改**，
+  其他板型不受影响。`RK_APP_TYPE=RKIPC_RV1106` 被多个其他板型共用，故 `build.sh` 生成器与
+  `rv1106_ipc/RkLunch.sh` 都不动，只在 V015 板级覆盖。
+- 生效顺序（`build.sh`）：`__PACKAGE_ROOTFS`（:2578）→ `__PACKAGE_OEM`（:2579）→ `build_mkimg oem`（:2585）
+  → `__RUN_POST_BUILD_SCRIPT`（:2595）→ `post_overlay`（:2596）→ `build_mkimg rootfs`（:2609）。
+  ⇒ 换装与删除均发生在 rootfs 成像**之前**；`overlay-dw-tly-v015` 置于 `RK_POST_OVERLAY` 末位确保覆盖生效。
+- 门控判定只认**普通文件**（`[ -f ] && [ ! -L ]`），目录/符号链接/悬空链接/FIFO 一律判为关闭；
+  构建前脚本级夹具已逐例验证（见 3.1 末与门控证据 §4.1）。
+- 开关用法：`touch /userdata/.rkipc-enable` 后重启即自启；`rm -f` 后重启恢复默认不自启。
 
-### 3.2 候选镜像与哈希（现行静态候选 `20260930.2013`；本次完整 `allsave` 产出）
+### 3.2 候选镜像与哈希（现行静态候选 `20260930.2056`）
 
-**现行静态候选**：`IMAGE/IPC_EMMC_BUILDROOT_RV1106_DW_TLY_V015_20260930.2013_RELEASE_TEST/`
-（源码提交 `aa2fffdb9`（修复无凭据时 `build_app` 被跳过），清洁 PATH `check`+`allsave`，均退出码 0；
-`check` 日志 `/tmp/dw012-v015-check-20260930-final.log`，`allsave` 日志 `/tmp/dw012-v015-allsave-20260930-final.log`（2,764 行））。
+**现行静态候选**：`IMAGE/IPC_EMMC_BUILDROOT_RV1106_DW_TLY_V015_20260930.2056_RELEASE_TEST/`
+（源码提交 `b1998ddfe`（rkipc 默认不自启门控），清洁 PATH `check`+`allsave`，均退出码 0；
+`check` 日志 `/tmp/dw012-v015-check-20260930-rkipc.log`，`allsave` 日志 `/tmp/dw012-v015-allsave-20260930-rkipc.log`（2,773 行））。
 
 | 产物 | 大小 | SHA-256 | 交叉复核 |
 |---|---|---|---|
-| `IMAGES/update.img` | 479,476,298 B | `90e77d72c3c9c06c27c9183eec427bb39bdd5e74c9985c7d425c160b981ddf58` | 双层解包与逐件哈希一致 |
-| `IMAGES/rootfs.img` | 423,669,760 B | `6d5e2b5f5f160853405963994dac83804974b7ce429f7cd8f14e93ff8534ce34` | **= `output/image/rootfs.img`**（逐字节） |
-| `IMAGES/boot.img`（FIT）内 `fdt` 子镜像 | 0x12970 B @ 0x800 | `e3b00deb653ccdcfaf6cd689c1d3b31be9a7612bd6c7307c30739a790b98f99a` | **= 构建 `rv1106g-dw-tly-v015.dtb`**（两处同哈希） |
-| `IMAGES/boot.img` 内 `kernel` 子镜像 | 0x37ee00 B @ 0x13200 | `c3d6b6c9434c7470e15b88665a0e6481577d54b5dfc33cd12165667438578c89` | **= 构建 `arch/arm/boot/zImage`**（新内核，含 `grf.o`） |
+| `IMAGES/update.img` | 479,476,298 B | `163abefa1ff12fdaf756e16e11af694c14e2d6e566cc354a0786b06a734a276b` | 双层解包与逐件哈希一致 |
+| `IMAGES/rootfs.img` | 423,669,760 B | `db38fb90b37f32fd01a981589552e10df391640bd97113604e663f273e27da5d` | **= `output/image/rootfs.img`**（逐字节） |
+| `IMAGES/oem.img` | 40,919,040 B | `30825e05245b771c4f5daefa284f7be94fb9c5b9eaf3820d1789a4be81458835` | 双层解包一致 |
+| `IMAGES/boot.img`（FIT）内 `fdt` 子镜像 | 0x12970 B @ 0x800 | `e3b00deb653ccdcfaf6cd689c1d3b31be9a7612bd6c7307c30739a790b98f99a` | **= 构建 `rv1106g-dw-tly-v015.dtb`**；与上一候选**逐字节相同** |
+| `IMAGES/boot.img` 内 `kernel` 子镜像 | 0x37ee00 B @ 0x13200 | `c3d6b6c9434c7470e15b88665a0e6481577d54b5dfc33cd12165667438578c89` | **= 构建 `arch/arm/boot/zImage`**；与上一候选**逐字节相同** |
 
-- 板型/分区：`RKFW` 头芯片串 `6011`；`package-file` = `env/idblock/uboot/boot/oem/userdata/rootfs`；
+- 板型/分区：`package-file` = `env/idblock/uboot/boot/oem/userdata/rootfs`；
   `env.img` 内 `blkdevparts=mmcblk0:32K(env),512K@32K(idblock),256K(uboot),32M(boot),512M(oem),256M(userdata),6G(rootfs)`；
   各分区尺寸均不越界（最大 rootfs 6.58%）。
-- `boot.img` 是 FIT（不是 Android boot 镜像）：`fdt` 切出后与 FIT 头 `hash value` 自证一致；反编译该**实际打包**的 DTB：
-  `model = "Dongwei DW-TLY-V015 eMMC"`、`mmc@ffaa0000` `bus-width = <0x04>`、`non-removable`、`supports-sdio`、
-  `syscon@ff538000` `"rockchip,rv1106-ioc"`（grf 匹配键在镜像内）、`ramoops@d00000` 存在；
-  **全树无 `cpu-supply`/`operating-points-v2`/`cpu0-opp-table`/`vdd_arm`**（对照旧候选 1656 命中 7 处）⇒ CPUFreq 关闭确已入镜像。
+- 反编译**实际打包**的 DTB：`model = "Dongwei DW-TLY-V015 eMMC"`；
+  **eMMC** `mmc@ffa90000` `bus-width = <0x08>`、`non-removable`、`no-sdio`、`no-sd`、
+  `vmmc-supply`/`vqmmc-supply` 均 → `/vcc-3v3`（`regulator-fixed`、3.3V、`regulator-always-on`）；
+  **Wi-Fi SDIO** `mmc@ffaa0000` 4 位 `supports-sdio` 50 MHz；**TF** `mmc@ff9a0000` 4 位 `supports-sd`；
+  `"rockchip,rv1106-ioc"`（grf 匹配键在镜像内）、`ramoops@d00000` 存在；
+  **全树无 `cpu-supply`/`operating-points-v2`/`cpu0-opp-table`/`vdd_arm` ⇒ CPUFreq 关闭确已入镜像。**
 - 最终 `.config`：`# CONFIG_CPU_FREQ is not set`、`CONFIG_ROCKCHIP_GRF=y`、`CONFIG_THERMAL=y`、
   `CONFIG_ROCKCHIP_THERMAL=y`、`CONFIG_MMC_DW_ROCKCHIP=y`。
-- **Wi-Fi 用户态已入包（新增验收）**：rootfs 内 `/usr/bin/rkwifi_server`(26,444 B)、`/usr/bin/wpa_supplicant`(458,644 B)、
-  `/usr/bin/hostapd`(504,436 B)、`/usr/lib/librkwifibt.so`(149,184 B) 均在位；`/etc/wpa_supplicant.conf` 65 B，
-  仅 `ctrl_interface=`/`ap_scan=`/`update_config=` 三键、`network`/`ssid`/`psk` 计数皆 0（哈希 `d35553a0…`，与 `DEBUG_FILES/app_out.tar` 内同名文件一致）；
-  Wi-Fi 内核侧 `aic8800_*.ko`/`aic8800dc_fw`/`insmod_wifi.sh` 仍在 oem `/usr/ko/`。**仅包内齐备，未运行验证。**
-- SMB：`/etc/init.d/S91smb` 在本候选 rootfs **不存在**（`debugfs stat` → File not found），`/usr/sbin/smbd` 仍随包。
-- **本候选取代 `2b251253… / 20260930.1950`**（后者 rootfs/oem **缺 Wi-Fi 用户态**，`build_app` 被跳过）**与 `2512e210… / 20260930.1656`**
-  （更早，DTB 仍含 CPU OPP/调压）。`20260930.1022`（`de90f9de…`）、`20260929.1330`（`61ffcb28…`）原样保留，仅作对照。
-- 完整命令、退出码、逐件哈希、依赖解析与未验证项见 `2026-09-30-v015-allsave-20260930-2013-image.md`。
+- **rkipc 门控已入镜像（本版核心验收）**：rootfs 内 `/etc/init.d/S21appinit` inode 4473、0755、1,731 B，
+  与源覆盖件**同哈希 `446ea151…`**；内容含 `/userdata/.rkipc-enable`，**不含**共享生成器的
+  `[ -f /etc/profile.d/RkEnv.sh ] && source` 那句。对照上一候选同路径为 197 B 共享生成器版。
+  oem 内 `rkipc`(461,648 B)/`RkLunch.sh`/`RkLunch-stop.sh` 均在位，即仍可显式拉起。
+- SMB：`/etc/init.d/S91smb` **不存在**（`debugfs stat` → File not found），`/usr/sbin/smbd`（58,612 B）仍随包。
+- **rkipc 依赖闭包完整（本次逐件复核）**：`readelf -d` 的 10 个直接 NEEDED 全部解析 ——
+  `librockit/librkaiq/librkmuxer/librockiva/librksysutils/librkaudio` 在 `oem/usr/lib`；
+  `libwpa_client.so`、`libiconv.so.2`、`libfreetype.so.6`（→ `libfreetype.so.6.18.3`，656,520 B 在位）在 `rootfs/usr/lib`；
+  `libc.so.0` 在 `rootfs/lib`。二级依赖 `libstdc++.so.6`/`libgcc_s.so.1`/`ld-uClibc.so.1`（`rootfs/lib`）、
+  `librockchip_mpp.so.1`/`librga.so`/`librknnmrt.so`（`oem/usr/lib`）亦齐备。
+  ⇒ **不存在缺库**；`libfreetype.so.6` 缺失报错来自 V020 NAND 分支，与 V015 无关（**仅包内静态核验，未实机加载**）。
+- **Wi-Fi 用户态在 rootfs**（`rkwifi_server`/`wpa_supplicant`/`hostapd`/`librkwifibt.so` + 无 network 块的
+  `wpa_supplicant.conf`），**内核驱动/固件在 oem** `/usr/ko/`（`aic8800_*.ko` 等）。**仅包内齐备，未运行验证。**
+- **本候选取代 `90e77d72… / 20260930.2013`**；后者及更早候选原样保留，仅作对照。
+- 完整命令、退出码、逐件哈希、依赖解析与未验证项见 `2026-09-30-v015-allsave-20260930.2056-image.md`。
 - `IMAGE/`、`output/` 均在 `.gitignore` 内，不进入 Git；构建有 1 处生成副作用（`librkwifibt.so` 被重写），已按 blob 精准恢复，恢复后工作区干净。
+
+### 3.2a 交付副本（供用户自行烧录，未推送/未发送）
+
+- 目录 `/mnt/c/Users/henry/Desktop/DW-012-V015-eMMC-RelayCandidates-20260930.2056/`，
+  含 `update.img`（479,476,298 B）、`说明.txt`、`SHA256SUMS`。
+- 复制后复核：交付 `update.img` SHA-256 `163abefa…` 与构建树源文件**逐字节相同**；
+  `sha256sum -c SHA256SUMS` 两项 OK。**未烧录、未对客户发送、未 push。**
 
 ### 3.3 分支卫生
 
@@ -163,18 +183,20 @@ DTS 事实（`rv1106g-dw-tly-v015.dts`，派生自 `rv1106-luckfox-pico-ultra-ip
   以及 DTS 注释自认沿用的 "V014 256MB DRAM" 假设，都需 V015 实板核对。
 - **无网络首启**：镜像不预置 Wi-Fi 凭据是刻意决定，但"设备端受控配网"流程未验证。
   - **已修复（源码 `aa2fffdb9`）**：`build_app` 因缺 `LF_WIFI_PSK/LF_WIFI_SSID` 整体早退
-    （`project/build.sh:641`）的连带跳过已解除；现行候选 `20260930.2013` 的 rootfs/oem **已含** Wi-Fi 用户态
+    （`project/build.sh:641`）的连带跳过已解除；现行候选 `20260930.2056` 的 rootfs/oem **已含** Wi-Fi 用户态
     （`rkwifi_server`、`wpa_supplicant`、`hostapd`、`librkwifibt.so`、无 `network` 块的 `/etc/wpa_supplicant.conf`，
     另 `wpa_cli*`/`libwpa_client.so` 亦随包），均在 **rootfs**；Wi-Fi 内核侧（`aic8800_*.ko` 等）在 oem `/usr/ko/`。详见 §3.2 与
-    `2026-09-30-v015-allsave-20260930-2013-image.md` §4。
+    `2026-09-30-v015-allsave-20260930-2056-image.md` §7。
   - **仍缺实机**：上述用户态文件**仅经包内静态核验确认在位**，未在 V015 实机加载/联网；`wpa_supplicant` 与
-    `rkwifi_server` 的运行与配网流程均**未实测**。旧候选（1656/1950）的缺口记录见
-    `2026-09-30-v015-allsave-20260930-1950-image.md` §4，仅供对照。
+    `rkwifi_server` 的运行与配网流程均**未实测**。
+- **rkipc 启动门控未实机验证**：门控只做过构建前脚本级夹具测试与镜像内静态核验，
+  **未在真机启动序列跑过**；门控依赖 `S20linkmount` 使 `/userdata` 在 `S21appinit` 执行前已挂载，
+  该时序未实机确认。手动 `touch /userdata/.rkipc-enable` 后重启能否如预期拉起 rkipc，**未实测**。
 - **V015 4 位 Wi-Fi SDIO 的 force_jtag_sdmmc 风险**：分析与最小移植见 3.4，**仍属未实板验证**。
   - 代码事实：该位（RV1106 GPIO3 IOC `force_jtag_sdmmc`，偏移 `0x02f4`，HIWORD 掩码，POR 默认 1）在本树 U-Boot/内核均无写入；
     V015 的 Wi-Fi SDIO 在 SDMMC0/GPIO3_A1..A7、4 位 ⇒ 若 POR 默认确为 1，4 位传输必 SBE（1 位可枚举）。
   - 推断（高置信，非实测）：V015 上该位启动后为 1、Wi-Fi 4 位不可用。**没有 V015 硬件**，未 devmem、未实测。
-  - 已处理：`grf.c` + V015 fragment + BoardConfig 已移植（3.4），内核构建通过；新候选 `20260930.1656` 的 FIT `kernel` 已含 `grf.o`（3.2）。
+  - 已处理：`grf.c` + V015 fragment + BoardConfig 已移植（3.4），内核构建通过；现行候选 `20260930.2056` 的 FIT `kernel` 已含 `grf.o`（与上一候选同哈希）。
   - 待办：上板时优先 `devmem 0xFF5582F4`（应为 `0x0`）与 Wi-Fi SDIO 4 位枚举/吞吐复核。
   - 注：旁证（同族旧板 `rv1106g-luckfox-pico-ultra-spi-nand.dts` 同布线、提交 `6831d9024` 自述 "wifi 还是异常"）方向一致但未定位根因，**不作结论**。
 - **旧候选**：
@@ -184,7 +206,9 @@ DTS 事实（`rv1106g-dw-tly-v015.dts`，派生自 `rv1106-luckfox-pico-ultra-ip
   - `IMAGE/..._20260930.1656_RELEASE_TEST/`（`update.img` `2512e210…`）：含 `grf.o`，但 DTB 仍带 CPU OPP/调压 ⇒
     **已被 `20260930.1950` 取代**，仅供对照。
   - `IMAGE/..._20260930.1950_RELEASE_TEST/`（`update.img` `2b251253…`）：CPUFreq 已关，但 `build_app` 被跳过 ⇒
-    rootfs/oem **缺 Wi-Fi 用户态** ⇒ **已被 `20260930.2013`（`90e77d72…`）取代**，仅供对照。
+    rootfs/oem **缺 Wi-Fi 用户态** ⇒ 仅供对照。
+  - `IMAGE/..._20260930.2013_RELEASE_TEST/`（`update.img` `90e77d72…`）：Wi-Fi 用户态已入包，但 rkipc **仍会开机自启**
+    ⇒ **已被 `20260930.2056`（`163abefa…`）取代**，仅供对照。
 - **网表证据的边界**：`2026-09-30-v015-netlist-sdio-pad-cross-check.md` 是**设计网表**对照，不是实物/焊装证据。
 
 ## 5. 复核与构建所用命令
@@ -226,7 +250,7 @@ debugfs -R "stat /etc/init.d/S91smb" <rootfs.img>                               
 ```
 完整清单与逐件哈希见 `2026-09-30-v015-allsave-20260930-1656-image.md`。
 
-### 5.4 本切片：现行候选 `20260930.2013` 构建与核验（源码 `aa2fffdb9`）
+### 5.4 上一候选 `20260930.2013` 构建与核验（源码 `aa2fffdb9`；已被 2056 取代）
 
 ```
 env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME="$HOME" TERM=dumb ./build.sh check     # 退出码 0
@@ -244,12 +268,37 @@ git checkout -- project/app/wifi_app/wifi/librkwifibt.so                        
 ```
 完整清单与逐件哈希见 `2026-09-30-v015-allsave-20260930-2013-image.md`。
 
+### 5.5 本切片：现行候选 `20260930.2056` 构建与 rkipc 门控核验（源码 `b1998ddfe`）
+
+```
+sh -n project/cfg/BoardConfig_IPC/dw-tly-v015-post.sh
+sh -n project/cfg/BoardConfig_IPC/overlay/overlay-dw-tly-v015/etc/init.d/S21appinit
+env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME="$HOME" TERM=dumb ./build.sh check     # 退出码 0
+env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME="$HOME" TERM=dumb ./build.sh allsave  # 退出码 0
+mkdir -p /tmp/u2056 /tmp/fw2056    # rkImageMaker/afptool 不自建输出目录，否则退出码 253
+tools/linux/Linux_Pack_Firmware/rkImageMaker -unpack <update.img> /tmp/u2056 /tmp/u2056                              # 退出码 0
+tools/linux/Linux_Pack_Firmware/afptool -unpack /tmp/u2056/firmware.img /tmp/fw2056                                  # 退出码 0
+for p in boot rootfs oem userdata uboot idblock env; do sha256sum /tmp/fw2056/Image/$p.img; done   # 与候选逐件一致
+dd if=<boot.img> of=/tmp/fit2056.dtb bs=1 skip=$((0x800)) count=$((0x12970))         # → e3b00deb…（与 2013 同）
+dd if=<boot.img> of=/tmp/fitkern2056.bin bs=1 skip=$((0x13200)) count=$((0x37ee00))  # → c3d6b6c9…（与 2013 同）
+debugfs -R "stat /etc/init.d/S21appinit" <rootfs.img>                                # inode 4473，0755，1,731 B
+debugfs -R "dump /etc/init.d/S21appinit /tmp/S21_2056.sh" <rootfs.img>               # → 446ea151…（= 源覆盖件）
+debugfs -R "stat /etc/init.d/S91smb" <rootfs.img>                                    # File not found
+debugfs -R "stat /usr/sbin/smbd" <rootfs.img>                                        # inode 592，58,612 B
+debugfs -R "dump /usr/bin/rkipc /tmp/rkipc_2056" <oem.img> ; readelf -d /tmp/rkipc_2056 | grep NEEDED
+sha256sum -c /mnt/c/Users/henry/Desktop/DW-012-V015-eMMC-RelayCandidates-20260930.2056/SHA256SUMS
+git checkout -- project/app/wifi_app/wifi/librkwifibt.so
+```
+完整清单与逐件哈希见 `2026-09-30-v015-allsave-20260930.2056-image.md`。
+
 ## 6. 本分支证据文件索引
 
 - `aidlc-docs/evidence/2026-09-30-v015-wifi-sdio-force-jtag.md`（4 位 Wi-Fi SDIO / force_jtag 分析与最小移植；现行结论）
 - `aidlc-docs/evidence/2026-09-30-v015-netlist-sdio-pad-cross-check.md`（V015 网表 × 数据手册球号对照；断言缩句依据）
-- `aidlc-docs/evidence/2026-09-30-v015-allsave-20260930-2013-image.md`（完整 `allsave` 构建与新候选静态核验；**现行候选**）
-- `aidlc-docs/evidence/2026-09-30-v015-allsave-20260930-1950-image.md`（上一候选，已被 2013 取代）
+- `aidlc-docs/evidence/2026-09-30-v015-rkipc-autostart-gate.md`（rkipc 默认不自启门控的实现、夹具测试与包内验证）
+- `aidlc-docs/evidence/2026-09-30-v015-allsave-20260930.2056-image.md`（完整 `allsave` 构建与候选静态核验；**现行候选**）
+- `aidlc-docs/evidence/2026-09-30-v015-allsave-20260930-2013-image.md`（上一候选，已被 2056 取代）
+- `aidlc-docs/evidence/2026-09-30-v015-allsave-20260930-1950-image.md`（更早候选，已被 2013 取代）
 - `aidlc-docs/evidence/2026-09-30-v015-allsave-20260930-1656-image.md`（更早候选，已被 1950 取代）
 - `aidlc-docs/evidence/2026-09-30-v015-wifi-userland-build-gap.md`（`build_app` 因缺凭据跳过 → Wi-Fi 用户态缺失的根因与修复）
 - `aidlc-docs/evidence/2026-09-30-v015-smb-nmb-autostart-disabled.md`（SMB/NMB 关闭）
