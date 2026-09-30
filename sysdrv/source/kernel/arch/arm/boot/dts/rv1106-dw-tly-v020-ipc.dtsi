@@ -224,6 +224,59 @@
 	cpu-supply = <&vdd_arm>;
 };
 
+/************************ CPU DVFS / OPP 电压限定 *************************
+ * V020 的 CPU 电源是固定 0.9V：U9(RY3430) 的 FB 由 R26=10k(VDD_0V9→FB)、
+ * R27=20k(FB→GND) 固定分压，L3 输出 VDD_0V9；网表上没有 CPU 侧 PWM/I2C
+ * 到 U9 的控制路径。该轨同时接 RV1106 CPU_DVDD(pin115)、DVDD_1..7、
+ * PMU_DVDD0V9、OSC_PLL_DVDD，因此**不能**随 CPU 频率抬高。
+ *
+ * 共用 rv1106.dtsi 的 cpu0-opp-table 是按可调 rail 设计的：1.416GHz 额定
+ * 925mV、1.512GHz 975mV、1.608GHz 1000mV，均高于 0.9V。在这块板上运行时
+ * 会以 -EINVAL 反复失败，来源有三处：
+ *   1) rockchip_pvtpll_calibrate_opp() 在首个 u_volt>0.9V 的 OPP 上
+ *      regulator_set_voltage 失败（rockchip_pvtpll_set_volt: -22）并中止校准；
+ *   2) rockchip_system_monitor 低温补偿（rockchip,low-temp=10℃）会把 1.608GHz
+ *      档的 (min,target,max) 抬成 (1000000,1000000,1000000)，固定 rail 无法
+ *      满足（drivers/opp/core.c _set_opp_voltage: -22）；
+ *   3) 上述失败使 cpu_opp_helper/__target_index 整个换档失败，日志刷屏。
+ *
+ * 处理：只保留额定电压 ≤0.9V 的档（≤1.296GHz，额定 875mV），并把保留档的
+ * target/min/max 全部钉在 0.9V，使固定的 vdd_arm 与 OPP 请求一致；额定电压
+ * 高于 0.9V 的档（≥1.416GHz）直接删除。不把固定 regulator 伪装成可调，也不
+ * 删除 cpu-supply。
+ * 注意：1.296GHz 是额定 ≤900mV 的最高档（875mV）；若日后实测该档在 0.9V 下
+ * 不稳，应继续下调上限到 1.2GHz（额定 850mV）。
+ */
+&cpu0_opp_table {
+	/* 与固定 0.9V 一致，禁止低温补偿把 OPP 电压抬到 >0.9V */
+	rockchip,low-temp-min-volt = <900000>;
+
+	/* 额定电压 >0.9V 的高压档，在 0.9V 下不可运行，删除 */
+	/delete-node/ opp-1416000000;
+	/delete-node/ opp-1512000000;
+	/delete-node/ opp-1608000000;
+
+	/* 保留档（≤1.296GHz）：target/min/max 全部 = 固定 rail 0.9V */
+	opp-408000000 {
+		opp-microvolt = <900000 900000 900000>;
+	};
+	opp-600000000 {
+		opp-microvolt = <900000 900000 900000>;
+	};
+	opp-816000000 {
+		opp-microvolt = <900000 900000 900000>;
+	};
+	opp-1104000000 {
+		opp-microvolt = <900000 900000 900000>;
+	};
+	opp-1200000000 {
+		opp-microvolt = <900000 900000 900000>;
+	};
+	opp-1296000000 {
+		opp-microvolt = <900000 900000 900000>;
+	};
+};
+
 /*************************** CSI *********************************/
 &csi2_dphy_hw {
 	status = "okay";
