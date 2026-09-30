@@ -2,7 +2,8 @@
 
 日期：2026-09-30
 工作项：DW-012 / V020 CPU DVFS 撤销（S2 Comprehensive）
-提交：见本文件所在提交（简体中文标题 "board: V020 撤销 CPU 动态调频/调压"）
+提交：初版 `2eafd831`（简体中文标题 "board: V020 撤销 CPU 动态调频/调压"）；该提交
+关于"固定频率来源"的表述有误（见第 5 节更正），已由后续单独提交更正，未改写历史。
 范围：只改 V020 板级 dtsi + V020 内核配置 fragment。未改通用 `rv1106.dtsi`/defconfig、
 驱动、应用、其它板；未烧写、未 ADB、未 `allsave`、未 push。
 
@@ -94,15 +95,37 @@
 `CONFIG_CPU_THERMAL` 只决定"能否把 CPU 当 cooling device"，没有 cpufreq policy 时
 本来就注册不了 cooling device，保留 =y 无副作用，未改。
 
-## 5. 频率：未指定新的运行频率
+## 5. 频率：未指定新的运行频率（并更正 2eafd831 提交说明的错误归属）
 
-撤销 cpufreq 后内核不再调用 `clk_set_rate(ARMCLK)` 换档。ARMCLK 保持 bootloader
-默认：U-Boot `arch/arm/include/asm/arch-rockchip/cru_rv1106.h` `APLL_HZ = 1104MHz`
-（`clk_rv1106.c:rv1106_clk_init()` 把 APLL 设为 APLL_HZ）。这与通用 `rv1106.dtsi`
-cru 节点 `assigned-clock-rates` 里 `ARMCLK=1104MHz`（由 clk 框架
-`drivers/clk/clk.c:5262 of_clk_set_defaults()` 在 provider 注册时应用）一致，
-因此本轮**没有引入任何新的频率**，CPU 停在 1.104GHz（共用 OPP 表里该档额定
-850mV ≤ 0.9V，处于固定轨能力内）。
+撤销 cpufreq 后内核不再有 cpufreq 侧 `clk_set_rate(ARMCLK)` 换档通路；本切片也
+没有写入任何新的频点。运行频点分两个阶段，必须分开看：
+
+- **U-Boot 阶段（bootloader 默认）= 816MHz，不是 1104MHz。**
+  `sysdrv/source/uboot/u-boot/arch/arm/include/asm/arch-rockchip/cru_rv1106.h` 里
+  `APLL_HZ` 由 `CONFIG_SPL_KERNEL_BOOT` 决定：`#ifdef CONFIG_SPL_KERNEL_BOOT` 时
+  为 `1104 * MHz`，`#else` 时为 `816 * MHz`。本树
+  `sysdrv/source/uboot/u-boot/.config` 明确 `# CONFIG_SPL_KERNEL_BOOT is not set`，
+  故该 U-Boot 构建走 `#else` 分支，`APLL_HZ = 816MHz`
+  （`clk_rv1106.c:rv1106_clk_init()` 把 APLL 设为 `APLL_HZ`）。
+- **Linux 阶段 = 1104000000Hz（预期）。** 共用 `rv1106.dtsi` 的 cru 节点
+  `assigned-clocks` 含 `<&cru ARMCLK>`，`assigned-clock-rates` 对应
+  `<1104000000>`。rv1106 cru 由 `CLK_OF_DECLARE(rv1106_cru, "rockchip,rv1106-cru",
+  rv1106_clk_init)`（`drivers/clk/rockchip/clk-rv1106.c:1208`）注册，
+  `drivers/clk/clk.c:5262 of_clk_init()` 在 provider 初始化时调用
+  `of_clk_set_defaults()`（`drivers/clk/clk-conf.c:131` → `__set_clk_rates`），
+  把 ARMCLK 设为 1.104GHz。这与 cpufreq 是否启用无关。
+
+> **更正说明（针对本次审核）**：2eafd831 的提交正文、板级 dtsi 注释与内核 config
+> 注释都写成"ARMCLK 保持 bootloader 默认（U-Boot APLL_HZ=1104MHz，与通用 dtsi
+> cru assigned-clock-rates 一致）"。这是**错的**：它把 U-Boot 阶段与 Linux 阶段混为
+> 一谈，且 U-Boot 侧数值本身也错（本树未设 `CONFIG_SPL_KERNEL_BOOT` ⇒ U-Boot 默认
+> 816MHz）。真实情况是：U-Boot 默认 816MHz，运行期的 1.104GHz 由 Linux 自己的
+> `assigned-clock-rates` 决定。提交正文无法在不改写历史的前提下修改，故由后续单独
+> 提交记录本次更正。
+
+因此本切片**没有引入任何新的运行频率**；静态候选的**预期**运行频点为 **1.104GHz**，
+但**尚未上板确认**（见第 7 节）。该档在通用 OPP 表里额定 850mV ≤ 0.9V，处于固定轨
+能力内，稳定性仍以实测为准。
 
 ## 6. 验证（本会话实做）
 
@@ -183,6 +206,9 @@ git status --short   # 仅上述 2 个源码文件（+ 本证据文件）
   regulator 报错、thermal 正常）留待 Codex 另下构建/上板切片。
 - 交付镜像哈希：本切片只构建到 `sysdrv/out/bin/board_uclibc_rv1106/`（`Image`/
   `rv1106g-dw-tly-v020.dtb`/`resource.img`），未做整包 FIT，故无 update.img 哈希。
-- CPU 固定频率 1.104GHz 来自 bootloader/通用 dtsi 默认，若实测该档在 0.9V 下不稳，
-  需回到通用 `rv1106.dtsi` 的 cru `assigned-clock-rates`（超出本切片允许范围）。
+- 运行频点分两阶段：U-Boot 默认 816MHz（本树未设 `CONFIG_SPL_KERNEL_BOOT`），
+  运行期预期 1.104GHz（Linux `assigned-clock-rates`）。1.104GHz 是**预期值，尚未上板
+  确认**。若实测 1.104GHz@0.9V 不稳，应在 **V020 板级 DTS** 里覆盖 `&cru` 的
+  `assigned-clock-rates` 降到更低频点，**不是**必须修改通用 `rv1106.dtsi`（该文件被
+  所有 RV1106 板共用，本板能板级覆盖即可）；后续降频决定须实测，不属本切片范围。
 - 未触碰通用 `rv1106.dtsi`、defconfig、V014/V015、驱动、应用、其它板。

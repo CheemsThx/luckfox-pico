@@ -235,10 +235,19 @@
  *   3) 本板的 vdd_arm 虚拟 fixed regulator 与 cpu0-opp-table 节点：对固定硬件
  *      轨没有软件控制意义，一并删除（前者已在上方删除，后者见下方 delete-node）。
  *
- * 频率：本板不指定任何运行频率。去掉 cpufreq 后内核不再调用 clk_set_rate(ARMCLK)
- * 换档；ARMCLK 保持 bootloader 的默认配置（U-Boot APLL_HZ=1104MHz，见
- * u-boot arch/arm/include/asm/arch-rockchip/cru_rv1106.h；与通用 rv1106.dtsi
- * cru 节点的 assigned-clock-rates ARMCLK=1104MHz 一致）。
+ * 频率：本板不指定任何运行频率。去掉 cpufreq 后内核不再有 cpufreq 侧
+ * clk_set_rate(ARMCLK) 换档通路；ARMCLK 的静态运行值来自内核 clk 框架在 cru
+ * provider 初始化时应用的通用 rv1106.dtsi cru 节点 assigned-clock-rates
+ * ARMCLK=1104000000（clk-rv1106.c CLK_OF_DECLARE → drivers/clk/clk.c:5262
+ * of_clk_init 调 of_clk_set_defaults，见 clk-conf.c:131）。因此**预期**运行
+ * 1.104GHz，须上板确认；它并非"bootloader 默认"。
+ * 纠正此前说法：本树 U-Boot 并非默认 1104MHz——
+ * sysdrv/source/uboot/u-boot/.config 为 `# CONFIG_SPL_KERNEL_BOOT is not set`，
+ * cru_rv1106.h 的 APLL_HZ 在未开该选项时是 816MHz（1104MHz 仅在
+ * CONFIG_SPL_KERNEL_BOOT=y 时）；816MHz 只是 bootloader 启动阶段的频点，Linux
+ * 起来后会按上面的 assigned-clock-rates 重新设为 1.104GHz。
+ * 后续若实测 1.104GHz@0.9V 不稳，应在板级 DTS 覆盖 `&cru` 的
+ * assigned-clock-rates 降频，而不是去改通用 rv1106.dtsi；该决定须实测，不在本次。
  *
  * 热保护保留，不受本改动影响：
  *   - tsadc 仍在（rv1106.dtsi tsadc@ff3c8000，rockchip,hw-tshut-temp=120℃、
