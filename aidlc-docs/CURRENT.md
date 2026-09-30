@@ -1,13 +1,16 @@
 # DW-012 当前状态快照（SDK 仓 / `codex/dw-012-v020-nand-validation`）
 
-- 生成日期：2026-09-30（本文件由一次只读复核产生；除本文件外未改动任何仓库文件）
+- 生成日期：2026-09-30（初版由只读复核产生；2026-09-30 晚追加 rkipc 门控返工记录）
 - 仓库与工作树：`/home/henry/rv1106/luckfox-pico-v020-main-axiarz`（git worktree）
 - 分支：`codex/dw-012-v020-nand-validation`
-- 起点/HEAD：`f2fd2dee9b339ba044f7813aaac9f1c10f57a58d`（"为 SDK 工作分支固化 Claude 执行规则"）
-- 工作区：`git status --short --branch` 干净；本分支**无 upstream**（未 push、未设跟踪）
-- 相对 `main`：领先 22 个提交
+- 起点/HEAD：初版 `f2fd2dee9b339ba044f7813aaac9f1c10f57a58d`；现 HEAD 见 `git log -1`
+- 工作区：构建会重写受版本控制的 `project/app/wifi_app/wifi/librkwifibt.so`（`allsave` 既有副作用）；
+  本分支**无 upstream**（未 push、未设跟踪）
+- 相对 `main`：领先若干提交
 - 2026-09-30 二次复核：第 5 节原"字节扫描无区分力"结论系 `grep` 包装函数误判，**已更正**（见第 5 节）
-- 本文件**不是**验收结论或交付说明，只登记截至上述 HEAD 的现状、已验证项、未验证项与已知证据缺口
+- 2026-09-30 三次追加：**`20260930.2054` 候选镜像门控失效**（详见第 7 节）。该镜像 rkipc 仍开机
+  自启，**不可作候选**；修复版 `20260930.2112` 已构建并静态核验。
+- 本文件**不是**验收结论或交付说明，只登记截至当前 HEAD 的现状、已验证项、未验证项与已知证据缺口
 
 ## 1. 边界：V020 NAND 验证板 ≠ V015 eMMC 量产
 
@@ -64,7 +67,25 @@
 - 该结论的完整推导、以及"U-Boot 默认 816MHz / Linux 运行期预期 1.104GHz"的更正，见
   `2026-09-30-v020-cpu-dvfs-removed.md`。
 
-### 3.3 候选镜像与哈希（本次独立复算，全部一致）
+### 3.3 V020 rkipc 默认自启门控（DW-012 / S2）—— 2026-09-30 返工
+
+> **结论更正**：前一提交 `00018c57a` 用"把 `S21appinit` 改名为 `S21appinit.disabled`"关闭自启，
+> **无效**。`20260930.2054` 镜像 rkipc 仍会开机启动。详见第 7 节与证据文件
+> `2026-09-30-v020-rkipc-autostart-gate-rework.md`。
+
+- 根因：rootfs 的 `etc/init.d/rcS` 用 `for i in /etc/init.d/S??* ;do` 枚举，`S??*` 只要求
+  `S`+两位数字、后缀任意，`S21appinit.disabled` **仍匹配**；rcS 只跳过目录/悬空链接，
+  普通文件照常 `$i start`。
+- 现行实现：保留 `S21appinit` 文件名，改用 V020 专属覆盖件
+  `project/cfg/BoardConfig_IPC/overlay/overlay-luckfox-buildroot-config/etc/init.d/S21appinit`
+  （sha256 `cd45ebe1…0817ef`），`start)` 判 `/userdata/.rkipc-enable` 为**普通文件**才启动；
+  覆盖件经 `RK_POST_OVERLAY` 末位在 rootfs 成像前覆盖生成器产物。共享脚本/V014 不动。
+- 时序：`S20linkmount` 先挂 `/userdata`（UBI volume，`ubiattach`+`ubirsvol` 扩满再 mount），
+  再到 `S21appinit`；挂载失败时 rcS 不中止，门控按"关闭"处理。
+- 起点提交正文"由 S20pstore 按 `.enable` 自动还原入口"为**错误陈述**：S20pstore 全文无
+  `.enable`/`mv`/`S21`，且该提交未改 S20pstore。已删除该说法。
+
+### 3.4 候选镜像与哈希（本次独立复算，全部一致）
 
 | 产物 | SHA-256 | 交叉复核 |
 |---|---|---|
@@ -76,6 +97,8 @@
 
 - 构建来源：从干净功能提交 `ebf61369f` 运行 `PATH=/usr/local/sbin:... ./build.sh allsave`（退出码 0）。
 - 静态包内检查：打包源目录 `output/out/rootfs_uclibc_rv1106/etc/init.d/` 内**无** `S91smb`。
+- **注**：上表为 `20260930.1010` 候选；**`20260930.2054` 不得再作候选**（门控失效）。最新为
+  `20260930.2112`，见第 7.3 节。
 - Windows 候选目录的 `MANIFEST.txt` 明确标注：未 push、未烧录、仅供 V020 NAND 验证板自行烧录，
   量产目标仍为 V015 eMMC。
 
@@ -132,7 +155,30 @@
 
 ## 6. 本分支证据文件索引
 
+- `aidlc-docs/evidence/2026-09-30-v020-rkipc-autostart-gate-rework.md`（rkipc 门控返工；现行结论）
 - `aidlc-docs/evidence/2026-09-30-v020-smb-nmb-autostart-disabled.md`（SMB/NMB 关闭；其第 8 节字节扫描表述经二进制安全复验成立，说明见第 5.1 节）
 - `aidlc-docs/evidence/2026-09-30-v020-cpu-dvfs-removed.md`（CPU DVFS 撤销；现行结论）
 - `aidlc-docs/evidence/2026-09-30-v020-cpu-dvfs-fixed-0v9.md`（原"限频"方案，**结论已被上一条取代**，仅根因分析可参考）
 - `aidlc-docs/evidence/2026-09-03-dw-sdk-003-pstore-ramoops.md`、`2026-09-02-csi-i2c4-disabled-root-cause.md`（更早切片）
+
+## 7. rkipc 门控返工（2026-09-30 晚）
+
+### 7.1 受影响的旧候选
+
+- `20260930.2054` 及更早的候选均用 `S21appinit.disabled` 方案，**门控失效**，rkipc 仍开机启动。
+  **不得**把 `2054` 称作可烧录候选。`1010` 及更早同样不含本门控（那时尚未引入）。
+
+### 7.2 修复版镜像与哈希（`20260930.2112`）
+
+| 产物 | SHA-256 |
+|---|---|
+| `IMAGE/IPC_SPI_NAND_TLY_V020_20260930.2112_RELEASE_TEST/IMAGES/update.img`（81,406,538 B） | `cb1de8decdc18828f717d9fc29ec88cb4d76f804302df268298423b548350155` |
+| 同目录 `rootfs.img`（60,293,120 B） | `08aca2821bca1f2fa0638b1334731248222766ce0c158e803fb3bd55ed8dfa78` |
+| 同目录 `boot.img`（3,866,112 B） | `04a067f0de82465a4df53a6ed54e017458639039e7c67dd58915f703e8f86f21` |
+
+- 构建：`./build.sh allsave`，退出码 0；日志 `/tmp/dw012-v020-rkipc-gate-allsave.log`。
+- 静态核验（详见证据文件）：打包源 `etc/init.d/S21appinit` 即门控覆盖件（sha256 与源码一致）、
+  **无 `.disabled`**；包内 `Image/rootfs.img` 与 `output/image/rootfs.img` 逐字节一致；
+  直接解析包内 UBIFS 卷 0（458 LEB，与 `mkfs.ubifs leb_cnt` 一致）检出门控脚本正文；
+  `rkipc` 的 `libfreetype.so.6`/`libiconv.so.2` 依赖在 `oem/usr/lib/` 有闭包。
+- **仍未实板验证**；仅供 V020 NAND 验证板自行烧录，非 V015 量产固件。
