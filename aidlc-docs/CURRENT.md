@@ -3,7 +3,8 @@
 - 生成日期：2026-09-30（初版为只读复核；随后按 DW-012 / S1 切片更新：网表对照与注释缩句、CPUFreq 关闭、完整 `allsave` 构建与新候选静态核验）
 - 最近更新：2026-09-30 深夜（第二轮）—— 在 `aa2fffdb9`（修复无凭据时 `build_app` 被跳过）上重跑 `check`+`allsave`，
   新候选 `20260930.2013`（`90e77d72…`）取代 `2b251253…`（20260930.1950）与 `2512e210…`（20260930.1656）；
-  该候选的 rootfs/oem **已含 Wi-Fi 用户态**（`rkwifi_server`/`wpa_supplicant`/`hostapd`/`librkwifibt.so` + 无 network 块的 `wpa_supplicant.conf`）
+  该候选的 **Wi-Fi 用户态在 rootfs**（`rkwifi_server`/`wpa_supplicant`/`hostapd`/`librkwifibt.so` + 无 network 块的 `wpa_supplicant.conf`），
+  **内核驱动/固件在 oem**（`/usr/ko/aic8800_*.ko` 等）——两侧齐备，但用户态四项**并非**在 oem 各有同名文件
 - 仓库与工作树：`/home/henry/rv1106/luckfox-pico-v015-main-axiarz`（`git worktree list` 实测，主仓为 `/home/henry/rv1106/luckfox-pico`）
 - 分支：`codex/dw-012-v015-emmc-adaptation`
 - 起点/HEAD（本切片改动前）：`077b56b3d1dbc906c36d259f9a2f3e10e9370ae4`（"限制 Claude 工作切片不得写入仓库外记忆"）
@@ -164,7 +165,7 @@ DTS 事实（`rv1106g-dw-tly-v015.dts`，派生自 `rv1106-luckfox-pico-ultra-ip
   - **已修复（源码 `aa2fffdb9`）**：`build_app` 因缺 `LF_WIFI_PSK/LF_WIFI_SSID` 整体早退
     （`project/build.sh:641`）的连带跳过已解除；现行候选 `20260930.2013` 的 rootfs/oem **已含** Wi-Fi 用户态
     （`rkwifi_server`、`wpa_supplicant`、`hostapd`、`librkwifibt.so`、无 `network` 块的 `/etc/wpa_supplicant.conf`，
-    另 `wpa_cli*`/`libwpa_client.so` 亦随包），Wi-Fi 内核侧仍在 oem `/usr/ko/`。详见 §3.2 与
+    另 `wpa_cli*`/`libwpa_client.so` 亦随包），均在 **rootfs**；Wi-Fi 内核侧（`aic8800_*.ko` 等）在 oem `/usr/ko/`。详见 §3.2 与
     `2026-09-30-v015-allsave-20260930-2013-image.md` §4。
   - **仍缺实机**：上述用户态文件**仅经包内静态核验确认在位**，未在 V015 实机加载/联网；`wpa_supplicant` 与
     `rkwifi_server` 的运行与配网流程均**未实测**。旧候选（1656/1950）的缺口记录见
@@ -233,7 +234,10 @@ env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME="$
 tools/linux/Linux_Pack_Firmware/rkImageMaker -unpack <update.img> /tmp/u2013                                          # 退出码 0
 tools/linux/Linux_Pack_Firmware/afptool -unpack /tmp/u2013/firmware.img /tmp/fw2013                                  # 退出码 0
 dd if=<boot.img> of=/tmp/fit2013.dtb bs=1 skip=$((0x800)) count=$((0x12970))         # → e3b00deb…（= 要求 DTB）
-debugfs -R "stat /usr/bin/{rkwifi_server,wpa_supplicant,hostapd}" <rootfs.img>       # 三者在位
+debugfs -R "stat /usr/bin/rkwifi_server" <rootfs.img>                                # inode 363，26,444 B
+debugfs -R "stat /usr/bin/wpa_supplicant" <rootfs.img>                               # inode 519，458,644 B
+debugfs -R "stat /usr/bin/hostapd" <rootfs.img>                                      # inode 495，504,436 B
+debugfs -R "stat /usr/lib/librkwifibt.so" <rootfs.img>                               # 四者须逐件独立执行
 debugfs -R "dump /etc/wpa_supplicant.conf /tmp/wpa_conf_2013.txt" <rootfs.img>       # 三键、无 network/ssid/psk
 debugfs -R "stat /etc/init.d/S91smb" <rootfs.img>                                    # File not found
 git checkout -- project/app/wifi_app/wifi/librkwifibt.so                             # 恢复唯一生成副作用
