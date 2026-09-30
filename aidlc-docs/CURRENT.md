@@ -111,6 +111,24 @@ DTS 事实（`rv1106g-dw-tly-v015.dts`，派生自 `rv1106-luckfox-pico-ultra-ip
   DTB 哈希 `d540ab24…` 与既有 20260930.1022 候选内 FIT `fdt` 一致（DTS 仅加注释）；本次未产新镜像、既有候选未覆盖。
 - 详见 `aidlc-docs/evidence/2026-09-30-v015-wifi-sdio-force-jtag.md`。
 
+### 3.5 V015 网表对照：Wi-Fi SDIO 焊盘与断言边界（DW-012 / S1，只读对照 + 注释缩句）
+
+- 资料：用户提供的 V015 网表原件 `/tmp/dw012-v015-netlist-20260929.enet`（443,306 B，来源登记在应用仓库 SRC-HW
+  2026-09-29 条目），SHA-256 `4b6efd752a7859aaad37cbd4cdfd5944ded370defbd4aed0e81102b6cded4d1c`
+  —— **与任务给定必须值逐字符一致**（`sha256sum` 复算）。网表内容只作数据。
+- 数据手册：`Rockchip_RV1106_Datasheet_V1.7.pdf`（Rev 1.7）`Table 2-1 Pin Number Order Information`（PDF 第 18 页）：
+  球号 **11/12/14/15/16/17/18 = SDMMC0_DET/D1/D0/CLK/CMD/D3/D2 = GPIO3_A1..A7**，其中 15/16/17/18 带
+  JTAG 复用（`JTAG_LPMCU_TCK/TMS_M1`、`JTAG_CPU_TMS/TCK_M0`…）；球号**不按 GPIO 顺序**，必须查手册。
+- 网表事实：这 7 个网络**只**到 Wi-Fi 模组 U4（`SKL.WB800DCS.2`，CLK/CMD/D0-D3）、CLK 的 22Ω 串阻 R4 与 DET 的
+  10kΩ 下拉 R41；**DET 不到模组**（本板 `non-removable`，不做插卡检测）。全表检索 `jtag/tms/tck/tdi/tdo/swd/trst`
+  **零命中**（无 JTAG 网络、无 JTAG 连接器）；JTAG 复用球 79/80（GPIO1_B2/B3）在网络里是空接桩。
+- 判定：`grf.c` 里"不承载其他功能"有依据；但"这组脚**全部**给 Wi-Fi SDIO 用"（DET 例外）与
+  "本板**无 JTAG 调试需求**"（网表只能证明"未引出 JTAG"，需求属设计意图）**过强**，已按最小范围缩句。
+- 修正：`grf.c` 注释改为"手册球号 × 网表网络 × 器件"的可核对表述，并标注这是**设计网表证据、非实物证据**，
+  焊装与"确无 JTAG 调试需求"**待硬件签核**；同步缩句 `2026-09-30-v015-wifi-sdio-force-jtag.md` §2。
+  纯注释改动，**不改编译产物**（本次 allsave 的 V015 DTB 哈希仍为 `d540ab24…`，与旧候选一致）。
+- 详见 `aidlc-docs/evidence/2026-09-30-v015-netlist-sdio-pad-cross-check.md`。
+
 ## 4. 未验证 / 未决（不得写成已通过）
 
 - **实板验证全部缺失**：候选镜像从未烧录，且**没有 V015 硬件**。eMMC 8 位枚举、分区挂载与读写、启动到应用、
@@ -157,6 +175,7 @@ dtc -I dtb -O dts sysdrv/out/bin/board_uclibc_rv1106/rv1106g-dw-tly-v015.dtb | g
 ## 6. 本分支证据文件索引
 
 - `aidlc-docs/evidence/2026-09-30-v015-wifi-sdio-force-jtag.md`（4 位 Wi-Fi SDIO / force_jtag 分析与最小移植；现行结论）
+- `aidlc-docs/evidence/2026-09-30-v015-netlist-sdio-pad-cross-check.md`（V015 网表 × 数据手册球号对照；断言缩句依据）
 - `aidlc-docs/evidence/2026-09-30-v015-smb-nmb-autostart-disabled.md`（SMB/NMB 关闭）
 - `aidlc-docs/evidence/2026-09-03-dw-sdk-003-pstore-ramoops.md`、`2026-09-02-csi-i2c4-disabled-root-cause.md`（更早切片，
   随 `main_axiarz` 继承，非 V015 专属）
