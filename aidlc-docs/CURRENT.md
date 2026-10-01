@@ -179,6 +179,13 @@
 - 构建：`./build.sh allsave`，退出码 0；日志 `/tmp/dw012-v020-rkipc-gate-allsave.log`。
 - 静态核验（详见证据文件）：打包源 `etc/init.d/S21appinit` 即门控覆盖件（sha256 与源码一致）、
   **无 `.disabled`**；包内 `Image/rootfs.img` 与 `output/image/rootfs.img` 逐字节一致；
-  直接解析包内 UBIFS 卷 0（458 LEB，与 `mkfs.ubifs leb_cnt` 一致）检出门控脚本正文；
-  `rkipc` 的 `libfreetype.so.6`/`libiconv.so.2` 依赖在 `oem/usr/lib/` 有闭包。
+  直接解析包内 UBIFS 卷 0（458 LEB，与 `mkfs.ubifs leb_cnt` 一致）检出门控脚本正文。
+- **更正（2026-10-01）**：本节原写"`rkipc` 的 `libfreetype.so.6`/`libiconv.so.2` 依赖在
+  `oem/usr/lib/` 有闭包"，**该陈述错误**。当时 `oem.img` 的打包源目录
+  `${RK_PROJECT_PACKAGE_OEM_DIR}/usr/lib` 已被共享 pre-OEM 脚本删掉这两个库；
+  所谓"闭包"指的是 rootfs 内的 `oem/usr/lib` 副本，而 V020 的 `/oem` 是独立 UBI 分区
+  （mtd4），`S20linkmount` 的 `mount_part oem /oem ubifs` 会把 rootfs 里那份整个盖住，
+  板端永远读不到 —— 即上一提交 `00018c57a` 的 freetype 恢复是**无效修复**。
+  实板只读核对也证实 `20260930.2112` 的 `/oem` 内无 `libfreetype.so.6`。
+  该缺陷已由 `b684dc30e`（改在 oem.img 打包前装入 OEM 打包目录）修复。
 - **仍未实板验证**；仅供 V020 NAND 验证板自行烧录，非 V015 量产固件。

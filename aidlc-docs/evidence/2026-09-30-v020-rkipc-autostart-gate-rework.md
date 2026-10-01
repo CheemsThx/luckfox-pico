@@ -107,6 +107,11 @@ EXEC   .../init.d/S21appinit.disabled        <= 缺陷复现：.disabled 仍被�
 - V020 DTS 路径：`S91smb` 移除；`libfreetype.so.6.17.0` / `libiconv.so.2.6.1` 就位且
   SONAME 链接（`.so.6`/`.so`、`.so.2`/`.so`）正确；`S21appinit` 为带门控的覆盖件；
   无 `.disabled`；退出 0。
+  - **更正（2026-10-01）**：此处描述的 freetype/iconv 恢复是当时 post 脚本把两库装到
+    `${ROOTFS}/oem/usr/lib`（rootfs 内嵌副本）。该恢复**无效**：V020 的 `/oem` 是独立
+    UBI 分区（mtd4），`S20linkmount` 的 `mount_part oem /oem ubifs` 会盖住 rootfs 内那份，
+    板端读不到。相关 post 逻辑已在 `b684dc30e` 删除，改由 V020 专属 pre-OEM 包装脚本
+    在 `build_mkimg oem` 前装入 OEM 打包目录。本文其余结论不受影响。
 - 负例：人为放入 `S21appinit.disabled` → 报错退出 1；临时移走覆盖件 overlay → 报错退出 1。
 - 回归：Ultra(V014) DTS 路径 → `S21appinit` 仍为生成器原样、无门控、未装 freetype、
   未删 `S91smb`（夹具内本无），退出 0。
@@ -145,6 +150,12 @@ PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin ./build.sh all
   与 `libiconv.so.2`；打包源 `oem/usr/lib/` 同时提供
   `libfreetype.so.6.17.0`（+`libfreetype.so.6`/`.so` 链接）与
   `libiconv.so.2.6.1`（+`libiconv.so.2`/`.so` 链接）。
+  - **更正（2026-10-01）**：上面这句"打包源 `oem/usr/lib/`"指的是 **rootfs 内嵌**的
+    `output/out/rootfs_uclibc_rv1106/oem/usr/lib/`，不是生成 `oem.img` 的
+    `${RK_PROJECT_PACKAGE_OEM_DIR}/usr/lib/`。实板只读核对证实 `20260930.2112` 的
+    独立 `/oem` 分区（mtd4）内**没有** `libfreetype.so.6`，故"闭包成立"对板端**不成立**。
+    本行当时的写法把两处 `oem/usr/lib` 混为一谈，属证据陈述错误；根因与修复见
+    `b684dc30e`（V020 专属 pre-OEM 包装脚本）与 `aidlc-docs/CURRENT.md` 第 7.2 节更正。
 
 ### 3.5 产物哈希
 
