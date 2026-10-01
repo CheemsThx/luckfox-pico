@@ -94,6 +94,14 @@ if [ "${RK_KERNEL_DTS}" = "rv1106g-dw-tly-v020.dts" ]; then
 		{ echo "luckfox-buildroot-ble-fix-post: ERROR V020 rkipc gate lacks camera module loader insmod_ko.sh" >&2; exit 1; }
 	grep -q 'KO_DIR=/oem/usr/ko' "$gate_dst" ||
 		{ echo "luckfox-buildroot-ble-fix-post: ERROR V020 rkipc gate KO_DIR is not /oem/usr/ko" >&2; exit 1; }
+	# Codex 2026-10-01 复审的两条不变量，钉在构建期：
+	#   1) 打开分支必须保留 RkLunch.sh 的退出码（此前无条件 return 0 吞掉状态）；
+	#   2) 关闭分支装载后必须核对核心媒体模块（insmod_ko.sh 无 set -e 且末行后台
+	#      跑 insmod_wifi.sh，缺模块时它仍会退出 0，故不能只看它的退出码）。
+	grep -q 'sh /oem/usr/bin/RkLunch.sh' "$gate_dst" ||
+		{ echo "luckfox-buildroot-ble-fix-post: ERROR V020 rkipc gate must invoke sh /oem/usr/bin/RkLunch.sh" >&2; exit 1; }
+	grep -q 'CORE_MEDIA_MODULES=' "$gate_dst" ||
+		{ echo "luckfox-buildroot-ble-fix-post: ERROR V020 rkipc gate lacks CORE_MEDIA_MODULES verification set" >&2; exit 1; }
 	if [ -e "$gate_bad" ]; then
 		echo "luckfox-buildroot-ble-fix-post: ERROR stale ${gate_bad} matches rcS S??* glob" >&2
 		exit 1

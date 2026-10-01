@@ -5,8 +5,9 @@
 #   __PACKAGE_OEM(:2563，把 app_out/lib 等拷进 ${RK_PROJECT_PACKAGE_OEM_DIR}/usr/lib)
 # 之后、`build_mkimg oem ${RK_PROJECT_PACKAGE_OEM_DIR}`(:2572) 之前执行本脚本。
 # 共享的 luckfox-buildroot-oem-pre.sh 无条件 `rm -rf .../usr/lib/libfreetype*`
-# 与 `libiconv*`（该脚本第 28、31 行）。V014 等板型不装 rkipc，故共享脚本对它们成立；
-# 但 V020 的 rkipc 硬依赖这两个库：
+# 与 `libiconv*`（该脚本第 28、31 行）。该共享脚本对所有板型（含 V014）的删除行为
+# 一概保持不变 —— 本包装脚本只在 V020 自己这一步把两库补回，不触碰共享脚本，也不改
+# 变 V014 等板型的 pre 行为。V020 之所以必须补回，是因为 V020 的 rkipc 硬依赖这两个库：
 #   readelf -d output/out/app_out/bin/rkipc → NEEDED libfreetype.so.6 / libiconv.so.2
 # 缺库时动态链接器直接失败，rkipc 起不来，OSD 叠加（默认 dateTime）全废。
 #

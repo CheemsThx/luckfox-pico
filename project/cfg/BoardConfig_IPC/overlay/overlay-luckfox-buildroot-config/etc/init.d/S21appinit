@@ -21,6 +21,20 @@
 #   连与 rkipc 无关的 dw-rec 录像也会一起失效（20260930.2112 实测现象）。
 #   因此“关闭”分支必须补上模块装载，只跳过 rkipc 本身。
 #
+# 为什么装载后还要“逐个核对核心模块是否真的在 lsmod 里”（Codex 2026-10-01 复审）：
+#   insmod_ko.sh 没有 `set -e`，其 __insmod()（sysdrv/drv_ko/insmod_ko.sh:8-13）对
+#   缺失的 .ko 只是静默 `[ -f ]` 跳过，且脚本末行 `$(pwd)/insmod_wifi.sh &` 把最后
+#   一条命令放后台 —— 后台 job 的启动成功使 **整条 insmod_ko.sh 的退出码为 0**，
+#   哪怕前面的 video_rkcif / video_rkisp / mpp_vcodec / rockit 一个都没装上。
+#   20260930.2112 候选镜像正是这种情况。故“insmod_ko.sh 退出 0”不足以证明媒体栈
+#   就绪；必须对 V020 SDK 明确会产出、且由 insmod_ko.sh 无条件装载的核心模块做
+#   存在性核对。核心集合只取 video_rkcif / video_rkisp / mpp_vcodec / rockit：
+#   - 不把 rga3 计入：V020 编译产物里根本没有 rga3.ko（output/out/oem/usr/ko 无此
+#     文件），它属于该 SDK 未编出的可选模块，纳入必备集会导致误报。
+#   - 绝不把任何 sensor 计入：insmod_ko.sh 末尾的 __rmmod_camera_sensor() 会把
+#     refcount==0 的 sensor 主动 rmmod（见 sysdrv/drv_ko/insmod_ko.sh:15-23,67），
+#     本板 sensor 未探到，故“sensor 未装载”是正常态而非故障。
+#
 # 为什么“打开”分支保持原样、不预先装载模块：
 #   insmod_ko.sh 的 __rmmod_camera_sensor()（sysdrv/drv_ko/insmod_ko.sh:15-23）
 #   会在装载末尾把 refcount==0 的 sensor 模块 rmmod 掉，且**同一趟不会重装**。
@@ -50,6 +64,9 @@
 
 RKIPC_ENABLE_FLAG=/userdata/.rkipc-enable
 KO_DIR=/oem/usr/ko
+# insmod_ko.sh 只装载各模块；模块名（lsmod 第一列）去掉 .ko 后缀。
+# 只列 V020 SDK 必产且被无条件装载的核心媒体模块，不含可选模块与 sensor。
+CORE_MEDIA_MODULES="video_rkcif video_rkisp mpp_vcodec rockit"
 
 rkipc_enabled() {
 	# 只认普通文件。必须排除符号链接：`[ -f ]` 会跟随链接，若允许链接，
@@ -57,9 +74,26 @@ rkipc_enabled() {
 	[ -f "$RKIPC_ENABLE_FLAG" ] && [ ! -L "$RKIPC_ENABLE_FLAG" ]
 }
 
+# 核心媒体模块是否都在 lsmod 里。lsmod 名与内核模块名同形（mpp_vcodec.ko -> mpp_vcodec）。
+media_modules_present() {
+	missing=""
+	for m in $CORE_MEDIA_MODULES; do
+		if ! lsmod | awk '{print $1}' | grep -qx "$m"; then
+			missing="$missing $m"
+		fi
+	done
+	[ -z "$missing" ] || {
+		echo "dw-tly-v020: ERROR core media modules not loaded:$missing" >&2
+		return 1
+	}
+	return 0
+}
+
 # 装载相机/媒体内核模块（dw-rec 与 rkipc 共用）。仅用于“关闭”分支。
 # 与 RkLunch.sh post_chk 的用法一致：先 cd 到 ko 目录再跑 insmod_ko.sh
 # （insmod_ko.sh 内部 `cd $_DIR` 并按相对名 __insmod xxx.ko）。
+# 由于 insmod_ko.sh 自身退出码不可靠（无 set -e + 后台 insmod_wifi.sh，见文件头），
+# 这里不以它的退出码为准，而是装载后核对核心模块确实已加载。
 load_media_modules() {
 	if [ ! -f "$KO_DIR/insmod_ko.sh" ]; then
 		echo "dw-tly-v020: ERROR camera module loader missing: $KO_DIR/insmod_ko.sh" >&2
@@ -67,9 +101,11 @@ load_media_modules() {
 	fi
 	echo "dw-tly-v020: loading camera/media modules ($KO_DIR/insmod_ko.sh)"
 	if ! ( cd "$KO_DIR" && sh insmod_ko.sh ); then
-		echo "dw-tly-v020: ERROR camera module load failed ($KO_DIR/insmod_ko.sh)" >&2
+		echo "dw-tly-v020: ERROR camera module loader exited nonzero ($KO_DIR/insmod_ko.sh)" >&2
 		return 1
 	fi
+	# 退出码只是必要条件：必须再核对核心模块真的进来了。
+	media_modules_present || return 1
 	return 0
 }
 
@@ -77,8 +113,11 @@ start() {
 	if rkipc_enabled; then
 		echo "dw-tly-v020: rkipc autostart enabled by /userdata/.rkipc-enable"
 		# 原厂启用路径：整条 RkLunch.sh，模块由其 post_chk 装载（只跑一次）。
+		# 保留其退出状态：post_chk 是 `post_chk &` 后台跑（RkLunch.sh:166），
+		# 但脚本同步段的失败（如 rcS() 里某个 S??* start 失败、sensor 高度分支
+		# 提前 return）仍应如实回传，不能被无条件的 `return 0` 吞掉。
 		sh /oem/usr/bin/RkLunch.sh
-		return 0
+		return $?
 	fi
 	echo "dw-tly-v020: rkipc autostart disabled; touch /userdata/.rkipc-enable and reboot to enable (manual: sh /oem/usr/bin/RkLunch.sh)"
 	# 关闭 rkipc，但仍装载相机/媒体模块，供 dw-rec 等使用。
