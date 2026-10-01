@@ -123,4 +123,8 @@ export RK_POST_BUILD_SCRIPT=luckfox-buildroot-ble-fix-post.sh
 # 覆盖，故本 overlay 放在最后，确保覆盖 project/build.sh 的 __PACKAGE_OEM
 # 生成的那一份 S21appinit（生成 → __RUN_POST_BUILD_SCRIPT → post_overlay →
 # rootfs 成像，覆盖发生在成像之前）。
+# 门控语义：默认（无 /userdata/.rkipc-enable）只跑 /oem/usr/ko/insmod_ko.sh
+# 装载相机/媒体模块，不启 rkipc；有该标志文件时整条走原厂 RkLunch.sh。
+# 关闭分支必须装载模块，否则 dw-rec 与 rkipc 共用的 /dev/video*、/dev/media*
+# 都不会出现（20260930.2112 实测缺 video_rkcif/rkisp/mpp/rockit）。
 export RK_POST_OVERLAY="overlay-luckfox-config overlay-luckfox-buildroot-init overlay-luckfox-buildroot-shadow overlay-luckfox-buildroot-rgb overlay-luckfox-wifibt-firmware overlay-luckfox-buildroot-config"

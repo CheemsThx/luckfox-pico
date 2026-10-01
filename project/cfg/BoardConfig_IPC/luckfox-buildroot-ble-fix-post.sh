@@ -61,9 +61,13 @@ fi
 # 门控由 V020 专属覆盖件 overlay-luckfox-buildroot-config/etc/init.d/S21appinit
 # 经 RK_POST_OVERLAY 覆盖进 rootfs（见 BoardConfig 的 RK_POST_OVERLAY 注释与
 # S20linkmount/S21appinit 的启动顺序）。这里只做构建期断言：
-#   1) 覆盖件存在且带 RkLunch.sh，覆盖确实发生在 post_overlay 之后；
+#   1) 覆盖件存在且带 RkLunch.sh 与相机模块装载入口 /oem/usr/ko/insmod_ko.sh，
+#      覆盖确实发生在 post_overlay 之后；
 #   2) 覆盖件保留 S21appinit 文件名，且产物里没有会被 rcS 的 S??* 误匹配的
 #      S21appinit.disabled 残留。
+# 断言 insmod_ko.sh 的原因：关闭 rkipc 时若不装载 video_rkcif/video_rkisp/
+# sensor/mpp_vcodec/rockit 等模块，板端连 /dev/video*、/dev/media* 都不会出现，
+# dw-rec 的本地录像也会一起失效（20260930.2112 实测）。把这条钉在构建期。
 # 为什么不能用“改名加 .disabled”关闭自启：rootfs 的 /etc/init.d/rcS 用
 #   `for i in /etc/init.d/S??* ;do`
 # 枚举（本分支已构建的 output/out/rootfs_uclibc_rv1106/etc/init.d/rcS 第 7 行），
@@ -86,11 +90,15 @@ if [ "${RK_KERNEL_DTS}" = "rv1106g-dw-tly-v020.dts" ]; then
 		{ echo "luckfox-buildroot-ble-fix-post: ERROR V020 rkipc gate lacks RkLunch.sh" >&2; exit 1; }
 	grep -q '\.rkipc-enable' "$gate_dst" ||
 		{ echo "luckfox-buildroot-ble-fix-post: ERROR V020 rkipc gate lacks /userdata/.rkipc-enable" >&2; exit 1; }
+	grep -q 'insmod_ko\.sh' "$gate_dst" ||
+		{ echo "luckfox-buildroot-ble-fix-post: ERROR V020 rkipc gate lacks camera module loader insmod_ko.sh" >&2; exit 1; }
+	grep -q 'KO_DIR=/oem/usr/ko' "$gate_dst" ||
+		{ echo "luckfox-buildroot-ble-fix-post: ERROR V020 rkipc gate KO_DIR is not /oem/usr/ko" >&2; exit 1; }
 	if [ -e "$gate_bad" ]; then
 		echo "luckfox-buildroot-ble-fix-post: ERROR stale ${gate_bad} matches rcS S??* glob" >&2
 		exit 1
 	fi
-	echo "luckfox-buildroot-ble-fix-post: V020 rkipc autostart gated by /userdata/.rkipc-enable (S21appinit kept)"
+	echo "luckfox-buildroot-ble-fix-post: V020 rkipc autostart gated by /userdata/.rkipc-enable (S21appinit kept, camera modules loaded when gated off)"
 fi
 
 # 说明：覆盖件由 post_overlay 在 __RUN_POST_BUILD_SCRIPT（本脚本）之后写入，

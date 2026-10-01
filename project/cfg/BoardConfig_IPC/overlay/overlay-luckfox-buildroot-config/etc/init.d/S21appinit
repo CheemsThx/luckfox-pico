@@ -1,5 +1,6 @@
 #!/bin/sh
-# DW-TLY-V020：rkipc 默认不自启；置位 /userdata/.rkipc-enable 后自启。
+# DW-TLY-V020：默认只装载相机/媒体内核模块，不启动 rkipc；
+# 置位 /userdata/.rkipc-enable 后按原厂 RkLunch 路径自启（含 rkipc）。
 #
 # 为什么在启动脚本这一层做门控、而不是删掉/改名 S21appinit：
 #   rootfs 的 /etc/init.d/rcS（Buildroot 生成，实际内容）用
@@ -10,7 +11,25 @@
 #   V020 自己的一个候选镜像（20260930.2054）正是这样留下 S21appinit.disabled，
 #   rkipc 依旧开机启动。正确做法是保留 S21appinit 这个名字，在 start 里加判断。
 #
-# 持久开关放在 /userdata（本板 UBI	volume，可写、刷写 rootfs 后仍保留）：
+# 为什么“关掉 rkipc”不能连带关掉内核模块装载：
+#   原厂链路里 RkLunch.sh 的 post_chk 才执行
+#       cd /oem/usr/ko && sh insmod_ko.sh
+#   （见 project/app/rkipc/rkipc/src/rv1106_ipc/RkLunch.sh:60-65）。insmod_ko.sh
+#   装载的 video_rkcif / video_rkisp / sensor / mpp_vcodec / rockit 等模块，
+#   正是 dw-rec 做本地录像与 rkipc 出流共同依赖的。若门控在“关闭”分支直接
+#   return 0，这些模块一个都不会装载，板端既无 /dev/video* 也无 /dev/media*，
+#   连与 rkipc 无关的 dw-rec 录像也会一起失效（20260930.2112 实测现象）。
+#   因此“关闭”分支必须补上模块装载，只跳过 rkipc 本身。
+#
+# 为什么“打开”分支保持原样、不预先装载模块：
+#   insmod_ko.sh 的 __rmmod_camera_sensor()（sysdrv/drv_ko/insmod_ko.sh:15-23）
+#   会在装载末尾把 refcount==0 的 sensor 模块 rmmod 掉，且**同一趟不会重装**。
+#   装载脚本若被跑两遍，第二遍会把 sensor rmmod 后不再补回，留下无 sensor 的
+#   残局。故“打开”分支绝不能先自己 insmod_ko.sh 再交给 RkLunch.sh（RkLunch
+#   的 post_chk 还会再跑一次）；它必须且只能走一次原厂 RkLunch.sh。
+#   这与“保留原厂启用路径、避免重复装载”的约束一致。
+#
+# 持久开关放在 /userdata（本板 UBI volume，可写、刷写 rootfs 后仍保留）：
 #   打开：touch /userdata/.rkipc-enable  ，重启生效
 #   关闭：rm -f /userdata/.rkipc-enable  ，重启生效
 #
@@ -22,8 +41,15 @@
 #   `return 1`，rcS 不因非零退出而中止，继续跑 S21appinit），随后 S20pstore、
 #   再到本脚本。因此这里无需再等挂载；实在拿不到标志文件就按“关闭”处理，
 #   这与设计意图（默认不出流）一致。
+#
+# S35wifibt 竞态：insmod_ko.sh 末行 `$(pwd)/insmod_wifi.sh &` 在后台装载 WiFi。
+#   本脚本“关闭”分支同步跑 insmod_ko.sh，相机模块在返回前已就位，WiFi 仍在后台。
+#   这一点与原厂一致：RkLunch.sh 也是 `post_chk &` 后台跑，S35wifibt 历来就要靠
+#   自己的 `lsmod | grep '^aic8800_fdrv '` 守卫（overlay-luckfox-buildroot-init/
+#   etc/init.d/S35wifibt:30）处理这一窗口。本改动不新引入竞态，也不改 S35wifibt。
 
 RKIPC_ENABLE_FLAG=/userdata/.rkipc-enable
+KO_DIR=/oem/usr/ko
 
 rkipc_enabled() {
 	# 只认普通文件。必须排除符号链接：`[ -f ]` 会跟随链接，若允许链接，
@@ -31,13 +57,33 @@ rkipc_enabled() {
 	[ -f "$RKIPC_ENABLE_FLAG" ] && [ ! -L "$RKIPC_ENABLE_FLAG" ]
 }
 
+# 装载相机/媒体内核模块（dw-rec 与 rkipc 共用）。仅用于“关闭”分支。
+# 与 RkLunch.sh post_chk 的用法一致：先 cd 到 ko 目录再跑 insmod_ko.sh
+# （insmod_ko.sh 内部 `cd $_DIR` 并按相对名 __insmod xxx.ko）。
+load_media_modules() {
+	if [ ! -f "$KO_DIR/insmod_ko.sh" ]; then
+		echo "dw-tly-v020: ERROR camera module loader missing: $KO_DIR/insmod_ko.sh" >&2
+		return 1
+	fi
+	echo "dw-tly-v020: loading camera/media modules ($KO_DIR/insmod_ko.sh)"
+	if ! ( cd "$KO_DIR" && sh insmod_ko.sh ); then
+		echo "dw-tly-v020: ERROR camera module load failed ($KO_DIR/insmod_ko.sh)" >&2
+		return 1
+	fi
+	return 0
+}
+
 start() {
-	if ! rkipc_enabled; then
-		echo "dw-tly-v020: rkipc autostart disabled; touch /userdata/.rkipc-enable and reboot to enable (manual: sh /oem/usr/bin/RkLunch.sh)"
+	if rkipc_enabled; then
+		echo "dw-tly-v020: rkipc autostart enabled by /userdata/.rkipc-enable"
+		# 原厂启用路径：整条 RkLunch.sh，模块由其 post_chk 装载（只跑一次）。
+		sh /oem/usr/bin/RkLunch.sh
 		return 0
 	fi
-	echo "dw-tly-v020: rkipc autostart enabled by /userdata/.rkipc-enable"
-	sh /oem/usr/bin/RkLunch.sh
+	echo "dw-tly-v020: rkipc autostart disabled; touch /userdata/.rkipc-enable and reboot to enable (manual: sh /oem/usr/bin/RkLunch.sh)"
+	# 关闭 rkipc，但仍装载相机/媒体模块，供 dw-rec 等使用。
+	load_media_modules
+	return $?
 }
 
 stop() {
