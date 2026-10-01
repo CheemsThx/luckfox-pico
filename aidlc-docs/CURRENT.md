@@ -189,3 +189,34 @@
   实板只读核对也证实 `20260930.2112` 的 `/oem` 内无 `libfreetype.so.6`。
   该缺陷已由 `b684dc30e`（改在 oem.img 打包前装入 OEM 打包目录）修复。
 - **仍未实板验证**；仅供 V020 NAND 验证板自行烧录，非 V015 量产固件。
+
+## 8. 第二个出厂缺陷与最新候选（2026-10-01）
+
+### 8.1 受影响的旧候选
+
+- `20260930.2112` 有两个出厂缺陷，**不可**作最终候选：
+  - A：独立 `/oem` 分区缺 `libfreetype.so.6`（实板只读核实）→ 由 `b684dc30e` 修复。
+  - B：门控关闭 rkipc 时连相机/媒体模块一起不装载，板端无 `/dev/video*`、`/dev/media*`
+    （实板只读核实）→ 由 `b8485375f` 修复。
+- `20260930.2054` 及更早门控失效，同样不可作候选。
+
+### 8.2 最新候选与哈希（`20261001.1026`）
+
+| 产物 | 大小 (B) | SHA-256 |
+|---|---|---|
+| `IMAGE/IPC_SPI_NAND_TLY_V020_20261001.1026_RELEASE_TEST/IMAGES/update.img` | 81,537,610 | `c8961d02640dc1a5ec1ab22c4c34c99acb0c415d5bebfd8499cfc4ce7ff3aeef` |
+| 同目录 `rootfs.img` | 59,899,904 | `55f1cd03dd2e1e784b79e2f9aed1b2109c825b24752b5c5337d43eab6f236710` |
+| 同目录 `oem.img` | 14,548,992 | `660dc13fa3e8fae37b778f2096b3bf4d033a514244b962589c63ec410fda6225` |
+| 同目录 `boot.img` | 3,866,112 | `5969c1fc3c5bc8b338129969cb1b36cbcc30f546b4bff75b0ada0f12700d562b` |
+
+- 构建源码提交 `b260e110e`；`./build.sh allsave` 退出码 0（日志
+  `/tmp/dw012-v020-camera-final-allsave.log`，末行 `build_allsave succeeded.`）。
+- 包内核验（两层解包 + 自建 UBIFS/LZO 解析器，详见
+  `aidlc-docs/evidence/2026-10-01-v020-camera-modules-when-rkipc-gated-off.md`）：
+  - 包内 `Image/rootfs.img`、`Image/oem.img` 与 `output/image/*` 逐字节一致；
+  - 包内 `/etc/init.d/S21appinit` 与源码覆盖件**逐字节 IDENTICAL**，含相机模块装载逻辑；
+  - 包内 `oem.img` 的 `libfreetype.so.6.17.0`（296648 B）、`libiconv.so.2.6.1`（251180 B）
+    与打包源**逐字节 IDENTICAL**，SONAME 链接齐全；
+  - 包内 rootfs **无** `S91smb`、**无** `S21appinit.disabled` 残留；
+  - 无 CPUFreq 回归（内核 `# CONFIG_CPU_FREQ is not set`）。
+- **仍未实板验证**；仅供 V020 NAND 验证板自行烧录，非 V015 量产固件，也非已获硬件签核。

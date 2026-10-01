@@ -148,6 +148,61 @@ $ git diff --check                                                              
 | 产物存在 `S21appinit.disabled` 残留 | rc=1，`ERROR stale … matches rcS S??* glob` |
 | V014(Luckfox Pico Ultra) DTS 路径 | rc=0，保留 S91smb，不安装 V020 门控 |
 
+## 4.4 最终镜像构建与包内静态核验（本切片最终产物）
+
+构建源码提交：`b260e110e52dcdbf7cc1c7d962da211574f25fb6`（本证据文件尚未提交前；
+构建时工作树唯一脏文件为构建副产物 `project/app/wifi_app/wifi/librkwifibt.so`，
+非源码改动）。
+
+```
+$ PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin ./build.sh allsave
+  退出码 0（后台运行并以 /tmp/dw012-v020-camera-final-allsave.exit 记录实际退出码；
+  末行 "Running build_allsave succeeded."）
+  日志：/tmp/dw012-v020-camera-final-allsave.log
+```
+
+日志内 V020 专属标记（均在 rootfs/oem 成像与打包之前）：
+
+```
+:2710 luckfox-buildroot-v020-oem-pre: restored libfreetype.so.6 -> libfreetype.so.6.17.0 into oem package dir
+:2719 luckfox-buildroot-v020-oem-pre: restored libiconv.so.2 -> libiconv.so.2.6.1 into oem package dir
+:2899 luckfox-buildroot-ble-fix-post: V020 SMB/NMB autostart disabled
+:2900 luckfox-buildroot-ble-fix-post: V020 rkipc autostart gated by /userdata/.rkipc-enable (S21appinit kept, camera modules loaded when gated off)
+```
+
+两层解包（`rkImageMaker -unpack update.img <dir>` → `afptool -unpack firmware.img <dir>`）：
+
+- 包内 `Image/rootfs.img`、`Image/oem.img` 与 `output/image/*` **逐字节一致**
+  （sha256 相同，见下表）。
+- 用自建 UBIFS 解析器（`/tmp/dw012-v020-camera-20261001/ubifs_extract.c` +
+  内核 `lib/lzo/lzo1x_decompress_safe.c`，LZO 解压）直接读包内卷 0：
+
+  | 校验 | 结果 |
+  |---|---|
+  | 包内 `/etc/init.d/S21appinit`（inum 2087，2 个 data 块，5218 B）vs 源码覆盖件 | **IDENTICAL**（逐字节） |
+  | 包内 `S21appinit` 含 `KO_DIR=/oem/usr/ko`、`insmod_ko.sh`、`load_media_modules`、`.rkipc-enable`、`RkLunch.sh` | 全部命中 |
+  | 包内 rootfs `/etc/init.d/`：`S91smb` | **不存在** |
+  | 包内 rootfs `/etc/init.d/`：`S21appinit.disabled` 或任何 `*appinit*` 残留 | **不存在**（只有 `S21appinit`） |
+  | 包内 `oem.img` `/usr/lib/libfreetype.so.6.17.0` vs 打包源 | **IDENTICAL**（296648 B） |
+  | 包内 `oem.img` `/usr/lib/libiconv.so.2.6.1` vs 打包源 | **IDENTICAL**（251180 B） |
+  | 包内 `oem.img` `libfreetype.so`/`.so.6`、`libiconv.so`/`.so.2` 链接（size 21 / 17） | 与打包源一致 |
+  | 包内 `oem.img` `/usr/ko/insmod_ko.sh` vs 源码 | **IDENTICAL**（1734 B） |
+
+- 无 CPUFreq 回归：构建内核 `sysdrv/source/objs_kernel/.config` 为
+  `# CONFIG_CPU_FREQ is not set`；包内 rootfs 无 cpufreq 相关启动项。
+- 无 SMB/NMB：包内 rootfs 无 `S91smb`（沿用 `ebf61369f` 的 V020 关闭行为）。
+
+### 4.5 产物哈希（本切片候选）
+
+| 产物（`IMAGE/IPC_SPI_NAND_TLY_V020_20261001.1026_RELEASE_TEST/IMAGES/`） | 大小 (B) | SHA-256 |
+|---|---|---|
+| `update.img` | 81,537,610 | `c8961d02640dc1a5ec1ab22c4c34c99acb0c415d5bebfd8499cfc4ce7ff3aeef` |
+| `rootfs.img` | 59,899,904 | `55f1cd03dd2e1e784b79e2f9aed1b2109c825b24752b5c5337d43eab6f236710` |
+| `oem.img` | 14,548,992 | `660dc13fa3e8fae37b778f2096b3bf4d033a514244b962589c63ec410fda6225` |
+| `boot.img` | 3,866,112 | `5969c1fc3c5bc8b338129969cb1b36cbcc30f546b4bff75b0ada0f12700d562b` |
+
+`IMAGE/…/IMAGES/*` 与 `output/image/*` 逐一 sha256 一致。**未烧录**。
+
 ## 5. 限制 / 未验证（不得写成实机通过）
 
 - **实板验证全部缺失**：修复后镜像从未烧录。相机模块是否真的装载成功、
