@@ -8,7 +8,6 @@
 # ADB 提前到 S15：S20linkmount 扩 UBI 若卡住，板子仍能被 USB 识别。
 
 ROOTFS="${RK_PROJECT_PACKAGE_ROOTFS_DIR}"
-APP_OUT="${RK_PROJECT_PATH_APP}"
 
 rm -f "${ROOTFS}/etc/dbus-1/system.d/pulseaudio-system.conf"
 
@@ -48,32 +47,14 @@ if [ "${RK_KERNEL_DTS}" = "rv1106g-dw-tly-v020.dts" ]; then
 	rm -f "${ROOTFS}/etc/init.d/S91smb"
 	echo "luckfox-buildroot-ble-fix-post: V020 SMB/NMB autostart disabled"
 
-	# --- 恢复 rkipc 运行所需但被共享前置脚本删掉的 freetype ---
-	# 共享的 luckfox-buildroot-oem-pre.sh（V020 与 V014 都用）无条件执行
-	# `rm -rf ${RK_PROJECT_PACKAGE_OEM_DIR}/usr/lib/libfreetype*`，而该脚本在
-	# __PACKAGE_OEM 之后、`__COPY_FILES $RK_PROJECT_PACKAGE_OEM_DIR
-	# $RK_PROJECT_PACKAGE_ROOTFS_DIR/oem` 之前运行（project/build.sh 的
-	# __RUN_PRE_BUILD_OEM_SCRIPT 在 :2551 附近）。V020 的 rkipc 有硬依赖：
-	#   readelf -d output/out/app_out/bin/rkipc → NEEDED libfreetype.so.6
-	#   （另有 libiconv.so.2，见下方一并恢复）
-	# 缺库时动态链接器直接失败，rkipc 无法启动，OSD 叠加（默认 dateTime）全废。
-	# 前置脚本是跨板共享文件，故只在此板的 post 里补回；V014 行为不变。
-	OEMLIB="/oem/usr/lib"
-	FT_VERSION="6.17.0"
-	for f in libfreetype.so."$FT_VERSION" libiconv.so.2.6.1; do
-		[ -f "${APP_OUT}/lib/${f}" ] || continue
-		install -D -m 0755 "${APP_OUT}/lib/${f}" "${ROOTFS}${OEMLIB}/${f}"
-	done
-	if [ -f "${ROOTFS}${OEMLIB}/libfreetype.so.${FT_VERSION}" ]; then
-		ln -sfn "libfreetype.so.${FT_VERSION}" "${ROOTFS}${OEMLIB}/libfreetype.so.6"
-		ln -sfn "libfreetype.so.${FT_VERSION}" "${ROOTFS}${OEMLIB}/libfreetype.so"
-		echo "luckfox-buildroot-ble-fix-post: V020 restored libfreetype.so.6 -> libfreetype.so.${FT_VERSION}"
-	fi
-	if [ -f "${ROOTFS}${OEMLIB}/libiconv.so.2.6.1" ]; then
-		ln -sfn "libiconv.so.2.6.1" "${ROOTFS}${OEMLIB}/libiconv.so.2"
-		ln -sfn "libiconv.so.2.6.1" "${ROOTFS}${OEMLIB}/libiconv.so"
-		echo "luckfox-buildroot-ble-fix-post: V020 restored libiconv.so.2 -> libiconv.so.2.6.1"
-	fi
+	# --- rkipc 所需的 freetype/iconv 不再在此处补 ---
+	# 原先这里把 libfreetype/libiconv 装到 "${ROOTFS}/oem/usr/lib"。那是**无效修复**：
+	# 本板 RK_BUILD_APP_TO_OEM_PARTITION=y，/oem 是独立分区（mtd4），
+	# S20linkmount 的 `mount_part oem /oem ubifs` 会把 rootfs 内这份 /oem 整个盖住，
+	# 板端永远读不到。20260930.2112 候选镜像因此仍缺 freetype，rkipc 起不来。
+	# 现在改由 V020 专属 pre-OEM 包装脚本 luckfox-buildroot-v020-oem-pre.sh 在
+	# `build_mkimg oem` **之前**装进 ${RK_PROJECT_PACKAGE_OEM_DIR}/usr/lib，
+	# 即真正被打进 oem.img 的那份。
 fi
 
 # --- V020 不默认启动 rkipc ---
@@ -118,5 +99,5 @@ fi
 
 echo "luckfox-buildroot-ble-fix-post: removed pulseaudio-system.conf, wrote /etc/bluetooth/main.conf"
 if [ "${RK_KERNEL_DTS}" = "rv1106g-dw-tly-v020.dts" ]; then
-	echo "luckfox-buildroot-ble-fix-post: V020 post done (freetype restored, rkipc autostart gated)"
+	echo "luckfox-buildroot-ble-fix-post: V020 post done (SMB off, rkipc autostart gated; freetype in oem.img handled by v020-oem-pre)"
 fi

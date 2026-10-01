@@ -106,7 +106,13 @@ export LF_WIFI_PSK="${LF_WIFI_PSK:-}"
 #  PRE and POST
 #################################################
 
-export RK_PRE_BUILD_OEM_SCRIPT=luckfox-buildroot-oem-pre.sh
+# [V020] 不用共享 luckfox-buildroot-oem-pre.sh，改用 V020 专属包装脚本：
+# 共享脚本会删掉 ${RK_PROJECT_PACKAGE_OEM_DIR}/usr/lib/libfreetype* 与 libiconv*，
+# 而本板 RK_BUILD_APP_TO_OEM_PARTITION=y ⇒ /oem 是独立分区（mtd4），rkipc 的这两个
+# 硬依赖必须在 `build_mkimg oem` 之前放回 OEM 打包目录；post 阶段补只进 rootfs 内被
+# 挂载盖住的 /oem。包装脚本先跑共享脚本（保留其裁剪行为）再把两库装回。
+# 共享 OEM pre 脚本、V014 及其他板型均不引用本包装脚本，行为不变。
+export RK_PRE_BUILD_OEM_SCRIPT=luckfox-buildroot-v020-oem-pre.sh
 export RK_PRE_BUILD_USERDATA_SCRIPT=luckfox-userdata-pre.sh
 export RK_POST_BUILD_SCRIPT=luckfox-buildroot-ble-fix-post.sh
 # [V020] 原样沿用。其中 overlay-luckfox-buildroot-rgb 在本板是惰性的：
