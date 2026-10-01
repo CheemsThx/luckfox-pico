@@ -1,5 +1,12 @@
 # V020 第二个出厂缺陷：门控关闭 rkipc 连带关掉相机/媒体模块装载
 
+> **[已取代 / SUPERSEDED，2026-10-01]** 本文件记录的候选镜像 `20261001.1026`
+> （`update.img` sha256 `c8961d02…aeef`）已被
+> `2026-10-01-v020-codex-review-s21appinit-fixes.md` 中记录的 **20261001.1051**
+> 候选取代（Codex 复审发现本文件对应的 `b8485375f` 源码有两处门控行为缺口，
+> 修复提交 `278545e14`）。本文件保留作为历史证据，其中“模块装载退出码即可判定
+> 成功”的说法已被证伪。
+
 - 工作项：DW-012 / V020 SPI NAND 验证板
 - 分支：`codex/dw-012-v020-nand-validation`（worktree `/home/henry/rv1106/luckfox-pico-v020-main-axiarz`）
 - 起点：`b684dc30e3569223a9079855ae3ac167d7e0c1df`（"fix(dw-012): V020 rkipc freetype 改在 oem.img 打包前装入 OEM 目录"）
